@@ -3,8 +3,8 @@ module github.com/willabides/overexported
 go 1.24.0
 
 require (
-	github.com/alecthomas/kong v1.8.1
-	github.com/stretchr/testify v1.8.1
+	github.com/alecthomas/kong v1.13.0
+	github.com/stretchr/testify v1.11.1
 )
 
 require (
