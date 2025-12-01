@@ -2,30 +2,66 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/alecthomas/kong"
+	"github.com/willabides/overexported/internal/overexported"
 )
 
-var version = "unknown"
-
-const description = `` // add description here
-
-type cmdRoot struct {
-	Version kong.VersionFlag `kong:"help=${VersionHelp}"`
-}
-
-var kongVars = kong.Vars{
-	"version":     version,
-	"VersionHelp": `Output the overexported version and exit.`,
+var cli struct {
+	Patterns []string `arg:"" required:"" help:"Package patterns to analyze."`
 }
 
 func main() {
-	var cli cmdRoot
-	k := kong.Parse(&cli,
-		kongVars,
-		kong.Description(description),
-	)
+	kong.Parse(&cli)
+	result, err := overexported.Run(cli.Patterns)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	printResult(result)
+}
 
-	//nolint:errcheck // stdout
-	_, _ = fmt.Fprintln(k.Stdout, "hello, world")
+func printResult(result *overexported.Result) {
+	if len(result.Exports) == 0 {
+		fmt.Println("All exports are used by external packages.")
+		return
+	}
+
+	cwd, _ := os.Getwd()
+
+	// Group by package
+	pkgSet := make(map[string]bool)
+	for _, exp := range result.Exports {
+		pkgSet[exp.PkgPath] = true
+	}
+
+	var pkgs []string
+	for pkg := range pkgSet {
+		pkgs = append(pkgs, pkg)
+	}
+	slices.Sort(pkgs)
+
+	for _, pkg := range pkgs {
+		fmt.Printf("\n%s:\n", pkg)
+		fmt.Println("  Can be unexported (only used internally):")
+
+		var pkgExports []overexported.Export
+		for _, exp := range result.Exports {
+			if exp.PkgPath == pkg {
+				pkgExports = append(pkgExports, exp)
+			}
+		}
+		slices.SortFunc(pkgExports, func(a, b overexported.Export) int {
+			return strings.Compare(a.Name, b.Name)
+		})
+
+		for _, exp := range pkgExports {
+			relPath, _ := filepath.Rel(cwd, exp.Position.File)
+			fmt.Printf("    %s (%s) ./%s:%d\n", exp.Name, exp.Kind, relPath, exp.Position.Line)
+		}
+	}
 }
