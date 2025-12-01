@@ -1,10 +1,10 @@
-# goproject-tmpl
+# overexported
 
 ## Install With [bindown](https://github.com/WillAbides/bindown)
 
 ```shell
-bindown template-source add goproject-tmpl https://github.com/WillAbides/goproject-tmpl/releases/latest/download/bindown.yaml
-bindown dependency add goproject-tmpl --source goproject-tmpl -y
+bindown template-source add overexported https://github.com/WillAbides/overexported/releases/latest/download/bindown.yaml
+bindown dependency add overexported --source overexported -y
 ```
 
 ## Usage
@@ -12,11 +12,11 @@ bindown dependency add goproject-tmpl --source goproject-tmpl -y
 <!--- start usage output --->
 
 ```
-Usage: goproject-tmpl [flags]
+Usage: overexported [flags]
 
 Flags:
   -h, --help       Show context-sensitive help.
-      --version    Output the goproject-tmpl version and exit.
+      --version    Output the overexported version and exit.
 ```
 
 <!--- end usage output --->
