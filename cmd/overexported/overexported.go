@@ -31,7 +31,10 @@ func printResult(result *overexported.Result) {
 		return
 	}
 
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
 
 	// Group by package
 	pkgSet := make(map[string]bool)
@@ -60,7 +63,10 @@ func printResult(result *overexported.Result) {
 		})
 
 		for _, exp := range pkgExports {
-			relPath, _ := filepath.Rel(cwd, exp.Position.File)
+			relPath, err := filepath.Rel(cwd, exp.Position.File)
+			if err != nil {
+				relPath = exp.Position.File
+			}
 			fmt.Printf("    %s (%s) ./%s:%d\n", exp.Name, exp.Kind, relPath, exp.Position.Line)
 		}
 	}
