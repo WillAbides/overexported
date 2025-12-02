@@ -40,7 +40,7 @@ jobs:
         id: release-train
         with:
           # set create-release: true when ready to start releasing
-          create-release: false
+          create-release: true
           release-refs: main
           pre-tag-hook: script/release-hook
 
