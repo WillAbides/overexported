@@ -22,6 +22,7 @@ Flags:
   -C, --chdir=STRING         Change to this directory before running.
       --test                 Include test packages and executables in the analysis.
       --generated            Include exports in generated Go files.
+      --json                 Output JSON records.
       --filter="<module>"    Report only packages matching this regular expression. '<module>'
                              matches the modules of all analyzed packages.
 ```

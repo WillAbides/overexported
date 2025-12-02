@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ var cli struct {
 	Chdir     string   `short:"C" help:"Change to this directory before running."`
 	Test      bool     `help:"Include test packages and executables in the analysis."`
 	Generated bool     `help:"Include exports in generated Go files."`
+	JSON      bool     `help:"Output JSON records."`
 	Filter    string   `default:"<module>" help:"Report only packages matching this regular expression. '<module>' matches the modules of all analyzed packages."`
 	Packages  []string `arg:"" required:"" help:"Package Packages to analyze."`
 }
@@ -37,7 +39,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	printResult(result)
+	if cli.JSON {
+		printResultJSON(result)
+	} else {
+		printResult(result)
+	}
 }
 
 func printResult(result *overexported.Result) {
@@ -85,4 +91,18 @@ func printResult(result *overexported.Result) {
 			fmt.Printf("    %s (%s) ./%s:%d\n", exp.Name, exp.Kind, relPath, exp.Position.Line)
 		}
 	}
+}
+
+func printResultJSON(result *overexported.Result) {
+	out, err := json.MarshalIndent(result.Exports, "", "\t")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	_, err = os.Stdout.Write(out)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println()
 }
