@@ -3,12 +3,47 @@
 version: "2"
 linters:
   enable:
+    - copyloopvar
+    - cyclop
+    - forbidigo
     - gocritic
     - gosec
+    - govet
+    - gochecknoglobals
     - revive
     - unconvert
     - noinlineerr
+    - errcheck
+    - errname
+    - intrange
+    - makezero
+    - ineffassign
+    - modernize
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnesserr
+    - predeclared
+    - reassign
+    - recvcheck
+    - sloglint
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
   settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1000 # https://staticcheck.dev/docs/checks/#ST1000
+        - -ST1016 # https://staticcheck.dev/docs/checks/#ST1016
+        - -QF1008 # https://staticcheck.dev/docs/checks/#QF1008
+    nakedret:
+      max-func-lines: 0
+    cyclop:
+      max-complexity: 10
     errcheck:
       check-blank: true
     gocritic:

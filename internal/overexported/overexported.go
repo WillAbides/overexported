@@ -57,9 +57,44 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 		opts = &Options{}
 	}
 
-	// Determine which packages to load. We need to load enough to find main
-	// packages for RTA analysis. If the pattern is already "./...", use it
-	// directly. Otherwise, load "./..." to ensure we find main packages.
+	allPkgs, needsTargetMatching, err := loadPackages(*opts, patterns)
+	if err != nil {
+		return nil, err
+	}
+
+	targetPaths := buildTargetPaths(allPkgs, patterns, needsTargetMatching)
+
+	filter, err := buildFilterPattern(*opts, allPkgs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build SSA program.
+	prog, pkgs := ssautil.Packages(allPkgs, ssa.InstantiateGenerics)
+	prog.Build()
+
+	exports, generated := collectExportsSSA(*opts, prog, allPkgs, targetPaths)
+	if len(exports) == 0 {
+		return &Result{}, nil
+	}
+
+	roots, err := findEntryPoints(pkgs)
+	if err != nil {
+		return nil, err
+	}
+
+	res := rta.Analyze(roots, true)
+	if res == nil {
+		return nil, fmt.Errorf("RTA analysis failed")
+	}
+
+	externallyUsed := findExternalUsage(*opts, res, allPkgs, targetPaths)
+	markRuntimeTypes(res, targetPaths, externallyUsed)
+
+	return buildResult(*opts, exports, externallyUsed, generated, filter), nil
+}
+
+func loadPackages(opts Options, patterns []string) ([]*packages.Package, bool, error) {
 	loadPatterns := patterns
 	needsTargetMatching := false
 	for _, p := range patterns {
@@ -70,8 +105,6 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 		}
 	}
 
-	// Load packages with full syntax for SSA.
-	// We need LoadAllSyntax because RTA traverses into dependencies.
 	cfg := &packages.Config{
 		Mode:  packages.LoadAllSyntax | packages.NeedModule,
 		Tests: opts.Test,
@@ -79,47 +112,25 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	}
 	allPkgs, err := packages.Load(cfg, loadPatterns...)
 	if err != nil {
-		return nil, fmt.Errorf("load packages: %w", err)
+		return nil, false, fmt.Errorf("load packages: %w", err)
 	}
 	if packages.PrintErrors(allPkgs) > 0 {
-		return nil, fmt.Errorf("packages contain errors")
+		return nil, false, fmt.Errorf("packages contain errors")
 	}
+	return allPkgs, needsTargetMatching, nil
+}
 
-	// Build target package paths. If we loaded exactly what the user requested,
-	// all loaded packages are targets. Otherwise, match patterns against loaded packages.
+func buildTargetPaths(allPkgs []*packages.Package, patterns []string, needsTargetMatching bool) map[string]bool {
 	targetPaths := make(map[string]bool)
-	if needsTargetMatching {
-		for _, pkg := range allPkgs {
-			if matchPackagePatterns(patterns, pkg.PkgPath) {
-				targetPaths[pkg.PkgPath] = true
-			}
-		}
-	} else {
-		for _, pkg := range allPkgs {
+	for _, pkg := range allPkgs {
+		if !needsTargetMatching || matchPackagePatterns(patterns, pkg.PkgPath) {
 			targetPaths[pkg.PkgPath] = true
 		}
 	}
+	return targetPaths
+}
 
-	// Build filter pattern
-	filter, err := buildFilterPattern(opts.Filter, allPkgs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build SSA program.
-	// Use ssautil.Packages instead of AllPackages to only build SSA for
-	// the initial packages, not all dependencies. This significantly
-	// reduces memory usage and build time.
-	prog, pkgs := ssautil.Packages(allPkgs, ssa.InstantiateGenerics)
-	prog.Build()
-
-	// Collect exports from target packages
-	exports, generated := collectExportsSSA(prog, allPkgs, targetPaths, opts.Generated)
-	if len(exports) == 0 {
-		return &Result{}, nil
-	}
-
-	// Find main packages and entry points
+func findEntryPoints(pkgs []*ssa.Package) ([]*ssa.Function, error) {
 	mains := ssautil.MainPackages(pkgs)
 	if len(mains) == 0 {
 		return nil, fmt.Errorf("no main packages found")
@@ -127,55 +138,36 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 
 	var roots []*ssa.Function
 	for _, mainPkg := range mains {
-		if init := mainPkg.Func("init"); init != nil {
+		init := mainPkg.Func("init")
+		if init != nil {
 			roots = append(roots, init)
 		}
-		if main := mainPkg.Func("main"); main != nil {
+		main := mainPkg.Func("main")
+		if main != nil {
 			roots = append(roots, main)
 		}
 	}
+	return roots, nil
+}
 
-	// Run RTA analysis. We need the call graph to properly track method calls.
-	res := rta.Analyze(roots, true)
-	if res == nil {
-		return nil, fmt.Errorf("RTA analysis failed")
-	}
-
-	// Find externally used exports via reachable functions
-	externallyUsed := findExternalUsageRTA(res, targetPaths, opts.Test)
-
-	// Find externally used exports via TypesInfo.Uses (handles consts, vars, and other references)
-	findExternalUsageTypesInfo(allPkgs, targetPaths, externallyUsed, opts.Test)
-
-	// Add types that appear in RuntimeTypes (interface satisfaction)
+func markRuntimeTypes(res *rta.Result, targetPaths, externallyUsed map[string]bool) {
 	res.RuntimeTypes.Iterate(func(t types.Type, _ any) {
 		named, ok := t.(*types.Named)
-		if !ok {
-			return
-		}
-		if named.Obj() == nil || named.Obj().Pkg() == nil {
+		if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
 			return
 		}
 		pkgPath := named.Obj().Pkg().Path()
 		if targetPaths[pkgPath] {
-			key := pkgPath + "." + named.Obj().Name()
-			externallyUsed[key] = true
-			// Note: We don't blanket-mark all methods as used. Instead, methods
-			// that are actually called (including via interface dispatch) should
-			// already be in the call graph. Only mark methods required by interfaces
-			// that the type actually satisfies in the analyzed code.
+			externallyUsed[pkgPath+"."+named.Obj().Name()] = true
 		}
 	})
-
-	// Build result
-	return buildResult(exports, externallyUsed, generated, opts.Generated, filter, opts.Exclude), nil
 }
 
 func collectExportsSSA(
+	opts Options,
 	prog *ssa.Program,
 	pkgs []*packages.Package,
 	targetPaths map[string]bool,
-	includeGenerated bool,
 ) (exports map[string]Export, generated map[string]bool) {
 	exports = make(map[string]Export)
 	generated = make(map[string]bool)
@@ -199,230 +191,169 @@ func collectExportsSSA(
 
 		// Pass nil for generated map when includeGenerated is true to skip filtering
 		genMap := generated
-		if includeGenerated {
+		if opts.Generated {
 			genMap = nil
 		}
-		collectPackageExports(prog, pkg.PkgPath, ssaPkg, genMap, exports)
+		c := &exportCollector{
+			prog:      prog,
+			exports:   exports,
+			generated: genMap,
+			pkgPath:   pkg.PkgPath,
+		}
+		c.collectPackageExports(ssaPkg)
 	}
 	return exports, generated
 }
 
-func collectPackageExports(
-	prog *ssa.Program,
-	pkgPath string,
-	ssaPkg *ssa.Package,
-	generated map[string]bool,
-	exports map[string]Export,
-) {
+// exportCollector holds shared state for collecting exports from a package.
+type exportCollector struct {
+	prog      *ssa.Program
+	exports   map[string]Export
+	generated map[string]bool
+	pkgPath   string
+}
+
+// addExport adds an export to the exports map if the position is not in a generated file.
+// Returns true if the export was added, false if it was skipped (generated file).
+func (c *exportCollector) addExport(name, kind string, pos token.Pos) bool {
+	posn := c.prog.Fset.Position(pos)
+	if c.generated[posn.Filename] {
+		return false
+	}
+	key := c.pkgPath + "." + name
+	c.exports[key] = Export{
+		Name:     name,
+		Kind:     kind,
+		Position: Position{File: posn.Filename, Line: posn.Line, Col: posn.Column},
+		PkgPath:  c.pkgPath,
+	}
+	return true
+}
+
+func (c *exportCollector) collectPackageExports(ssaPkg *ssa.Package) {
 	for _, mem := range ssaPkg.Members {
 		switch m := mem.(type) {
 		case *ssa.Function:
-			collectFunctionExport(prog, pkgPath, m, generated, exports)
+			c.collectFunctionExport(m)
 		case *ssa.Type:
-			collectTypeExport(prog, pkgPath, m, generated, exports)
+			c.collectTypeExport(m)
 		case *ssa.Global:
-			collectGlobalExport(prog, pkgPath, m, generated, exports)
+			c.collectGlobalExport(m)
 		case *ssa.NamedConst:
-			collectConstExport(prog, pkgPath, m, generated, exports)
+			c.collectConstExport(m)
 		}
 	}
 }
 
-func collectFunctionExport(
-	prog *ssa.Program,
-	pkgPath string,
-	fn *ssa.Function,
-	generated map[string]bool,
-	exports map[string]Export,
-) {
+func (c *exportCollector) collectFunctionExport(fn *ssa.Function) {
 	if !token.IsExported(fn.Name()) || fn.Synthetic != "" {
 		return
 	}
-	posn := prog.Fset.Position(fn.Pos())
-	if generated[posn.Filename] {
-		return
-	}
-	key := pkgPath + "." + fn.Name()
-	exports[key] = Export{
-		Name:     fn.Name(),
-		Kind:     "func",
-		Position: Position{File: posn.Filename, Line: posn.Line, Col: posn.Column},
-		PkgPath:  pkgPath,
-	}
+	c.addExport(fn.Name(), "func", fn.Pos())
 }
 
-func collectTypeExport(
-	prog *ssa.Program,
-	pkgPath string,
-	m *ssa.Type,
-	generated map[string]bool,
-	exports map[string]Export,
-) {
+func (c *exportCollector) collectTypeExport(m *ssa.Type) {
 	if !token.IsExported(m.Name()) {
 		return
 	}
-	posn := prog.Fset.Position(m.Pos())
-	if generated[posn.Filename] {
+	if !c.addExport(m.Name(), "type", m.Pos()) {
 		return
-	}
-	key := pkgPath + "." + m.Name()
-	exports[key] = Export{
-		Name:     m.Name(),
-		Kind:     "type",
-		Position: Position{File: posn.Filename, Line: posn.Line, Col: posn.Column},
-		PkgPath:  pkgPath,
 	}
 
 	// Collect methods on this type (both value and pointer receivers)
 	named := m.Object().Type().(*types.Named)
-	collectMethodsFromMethodSet(prog, pkgPath, m.Name(), prog.MethodSets.MethodSet(named), generated, exports)
-	collectMethodsFromMethodSet(prog, pkgPath, m.Name(), prog.MethodSets.MethodSet(types.NewPointer(named)), generated, exports)
+	c.collectMethodsFromMethodSet(m.Name(), c.prog.MethodSets.MethodSet(named))
+	c.collectMethodsFromMethodSet(m.Name(), c.prog.MethodSets.MethodSet(types.NewPointer(named)))
 }
 
-func collectMethodsFromMethodSet(
-	prog *ssa.Program,
-	pkgPath, typeName string,
-	mset *types.MethodSet,
-	generated map[string]bool,
-	exports map[string]Export,
-) {
-	for i := range mset.Len() {
-		sel := mset.At(i)
+func (c *exportCollector) collectMethodsFromMethodSet(typeName string, mset *types.MethodSet) {
+	for sel := range mset.Methods() {
 		if !sel.Obj().Exported() {
 			continue
 		}
-		fn := prog.MethodValue(sel)
+		fn := c.prog.MethodValue(sel)
 		if fn == nil || fn.Synthetic != "" {
 			continue
 		}
-		mposn := prog.Fset.Position(fn.Pos())
-		if generated[mposn.Filename] {
+		methodName := typeName + "." + sel.Obj().Name()
+		methodKey := c.pkgPath + "." + methodName
+		_, exists := c.exports[methodKey]
+		if exists {
 			continue
 		}
-		methodKey := pkgPath + "." + typeName + "." + sel.Obj().Name()
-		if _, exists := exports[methodKey]; !exists {
-			exports[methodKey] = Export{
-				Name:     typeName + "." + sel.Obj().Name(),
-				Kind:     "method",
-				Position: Position{File: mposn.Filename, Line: mposn.Line, Col: mposn.Column},
-				PkgPath:  pkgPath,
-			}
-		}
+		c.addExport(methodName, "method", fn.Pos())
 	}
 }
 
-func collectGlobalExport(
-	prog *ssa.Program,
-	pkgPath string,
-	g *ssa.Global,
-	generated map[string]bool,
-	exports map[string]Export,
-) {
+func (c *exportCollector) collectGlobalExport(g *ssa.Global) {
 	if !token.IsExported(g.Name()) {
 		return
 	}
-	posn := prog.Fset.Position(g.Pos())
-	if generated[posn.Filename] {
-		return
-	}
-	key := pkgPath + "." + g.Name()
-	exports[key] = Export{
-		Name:     g.Name(),
-		Kind:     "var",
-		Position: Position{File: posn.Filename, Line: posn.Line, Col: posn.Column},
-		PkgPath:  pkgPath,
-	}
+	c.addExport(g.Name(), "var", g.Pos())
 }
 
-func collectConstExport(
-	prog *ssa.Program,
-	pkgPath string,
-	c *ssa.NamedConst,
-	generated map[string]bool,
-	exports map[string]Export,
-) {
-	if !token.IsExported(c.Name()) {
+func (c *exportCollector) collectConstExport(cn *ssa.NamedConst) {
+	if !token.IsExported(cn.Name()) {
 		return
 	}
-	posn := prog.Fset.Position(c.Pos())
-	if generated[posn.Filename] {
-		return
-	}
-	key := pkgPath + "." + c.Name()
-	exports[key] = Export{
-		Name:     c.Name(),
-		Kind:     "const",
-		Position: Position{File: posn.Filename, Line: posn.Line, Col: posn.Column},
-		PkgPath:  pkgPath,
-	}
+	c.addExport(cn.Name(), "const", cn.Pos())
 }
 
-func findExternalUsageRTA(
+func findExternalUsage(
+	opts Options,
 	res *rta.Result,
+	allPkgs []*packages.Package,
 	targetPaths map[string]bool,
-	includeTests bool,
 ) map[string]bool {
 	used := make(map[string]bool)
+	findCrossPackageCalls(opts, res, targetPaths, used)
+	findTypeRefsInReachable(opts, res, targetPaths, used)
+	findExternalUsageTypesInfo(opts, allPkgs, targetPaths, used)
+	return used
+}
 
-	// Walk call graph edges to find cross-package calls
+func findCrossPackageCalls(opts Options, res *rta.Result, targetPaths, used map[string]bool) {
 	for fn, node := range res.CallGraph.Nodes {
 		if fn == nil || fn.Pkg == nil {
 			continue
 		}
-		callerPkg := fn.Pkg.Pkg.Path()
-		// When not including tests, treat external test packages (foo_test)
-		// as the same package as foo. When including tests, external test
-		// packages are considered separate packages.
-		if !includeTests {
-			callerPkg = strings.TrimSuffix(callerPkg, "_test")
-		}
+		callerPkg := normalizePkgPath(fn.Pkg.Pkg.Path(), opts)
 
 		for _, edge := range node.Out {
 			callee := edge.Callee.Func
 			if callee == nil {
 				continue
 			}
-
-			// For instantiated generic functions, Pkg is nil but Origin().Pkg is set
 			calleePkg := getSSAPkgPath(callee)
-			if calleePkg == "" {
+			if calleePkg == "" || !targetPaths[calleePkg] || callerPkg == calleePkg {
 				continue
 			}
-
-			// Only care about calls to target packages
-			if !targetPaths[calleePkg] {
-				continue
-			}
-
-			// Check if this is an external call
-			if callerPkg != calleePkg {
-				key := buildSSAKey(callee)
-				if key != "" {
-					used[key] = true
-				}
+			key := buildSSAKey(callee)
+			if key != "" {
+				used[key] = true
 			}
 		}
 	}
+}
 
-	// Also check for type references in reachable functions
+func findTypeRefsInReachable(opts Options, res *rta.Result, targetPaths, used map[string]bool) {
 	for fn := range res.Reachable {
 		if fn == nil {
 			continue
 		}
-		// For instantiated generic functions, use Origin() to get the package
 		callerPkg := getSSAPkgPath(fn)
 		if callerPkg == "" {
 			continue
 		}
-		if !includeTests {
-			callerPkg = strings.TrimSuffix(callerPkg, "_test")
-		}
-
-		// Check type references in function signature and body
-		collectTypeRefsFromFunc(fn, callerPkg, targetPaths, used)
+		collectTypeRefsFromFunc(fn, normalizePkgPath(callerPkg, opts), targetPaths, used)
 	}
+}
 
-	return used
+func normalizePkgPath(pkgPath string, opts Options) string {
+	if !opts.Test {
+		return strings.TrimSuffix(pkgPath, "_test")
+	}
+	return pkgPath
 }
 
 // getSSAPkgPath returns the package path for an SSA function.
@@ -441,7 +372,7 @@ func getSSAPkgPath(fn *ssa.Function) string {
 // findExternalUsageTypesInfo finds externally used exports by examining
 // TypesInfo.Uses across all packages. This catches references to consts,
 // vars, types, and functions that RTA's call graph doesn't track.
-func findExternalUsageTypesInfo(allPkgs []*packages.Package, targetPaths, used map[string]bool, includeTests bool) {
+func findExternalUsageTypesInfo(opts Options, allPkgs []*packages.Package, targetPaths, used map[string]bool) {
 	for _, pkg := range allPkgs {
 		if pkg.TypesInfo == nil {
 			continue
@@ -450,7 +381,7 @@ func findExternalUsageTypesInfo(allPkgs []*packages.Package, targetPaths, used m
 		// When not including tests, treat external test packages (foo_test)
 		// as the same package as foo. When including tests, external test
 		// packages are considered separate packages.
-		if !includeTests {
+		if !opts.Test {
 			callerPkg = strings.TrimSuffix(callerPkg, "_test")
 		}
 
@@ -481,7 +412,8 @@ func buildSSAKey(fn *ssa.Function) string {
 	pkgPath := fn.Pkg.Pkg.Path()
 
 	// Check if this is a method
-	if recv := fn.Signature.Recv(); recv != nil {
+	recv := fn.Signature.Recv()
+	if recv != nil {
 		typeName := getReceiverTypeName(recv.Type())
 		if typeName != "" {
 			return pkgPath + "." + typeName + "." + fn.Name()
@@ -491,11 +423,11 @@ func buildSSAKey(fn *ssa.Function) string {
 }
 
 func getReceiverTypeName(t types.Type) string {
-	switch t := t.(type) {
+	switch tp := t.(type) {
 	case *types.Named:
-		return t.Obj().Name()
+		return tp.Obj().Name()
 	case *types.Pointer:
-		return getReceiverTypeName(t.Elem())
+		return getReceiverTypeName(tp.Elem())
 	}
 	return ""
 }
@@ -508,101 +440,80 @@ func collectTypeRefsFromFunc(fn *ssa.Function, callerPkg string, targetPaths, us
 
 	// Check return types
 	results := fn.Signature.Results()
-	for i := range results.Len() {
-		collectTypeRefs(results.At(i).Type(), callerPkg, targetPaths, used)
+	for v := range results.Variables() {
+		collectTypeRefs(v.Type(), callerPkg, targetPaths, used)
 	}
 
 	// Check types used in function body
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
-			// Type assertions and conversions
-			if ta, ok := instr.(*ssa.TypeAssert); ok {
-				collectTypeRefs(ta.AssertedType, callerPkg, targetPaths, used)
-			}
-			if cv, ok := instr.(*ssa.Convert); ok {
-				collectTypeRefs(cv.Type(), callerPkg, targetPaths, used)
-			}
-			if cv, ok := instr.(*ssa.ChangeType); ok {
-				collectTypeRefs(cv.Type(), callerPkg, targetPaths, used)
-			}
-			// Field accesses and struct literals
-			if fa, ok := instr.(*ssa.FieldAddr); ok {
-				collectTypeRefs(fa.X.Type(), callerPkg, targetPaths, used)
-			}
-			if f, ok := instr.(*ssa.Field); ok {
-				collectTypeRefs(f.X.Type(), callerPkg, targetPaths, used)
-			}
-			// Allocations
-			if alloc, ok := instr.(*ssa.Alloc); ok {
-				collectTypeRefs(alloc.Type(), callerPkg, targetPaths, used)
-			}
-			// Make (slices, maps, chans)
-			if mk, ok := instr.(*ssa.MakeSlice); ok {
-				collectTypeRefs(mk.Type(), callerPkg, targetPaths, used)
-			}
-			if mk, ok := instr.(*ssa.MakeMap); ok {
-				collectTypeRefs(mk.Type(), callerPkg, targetPaths, used)
-			}
-			if mk, ok := instr.(*ssa.MakeChan); ok {
-				collectTypeRefs(mk.Type(), callerPkg, targetPaths, used)
+			switch v := instr.(type) {
+			case *ssa.TypeAssert:
+				collectTypeRefs(v.AssertedType, callerPkg, targetPaths, used)
+			case *ssa.Convert, *ssa.ChangeType, *ssa.Alloc, *ssa.MakeSlice, *ssa.MakeMap, *ssa.MakeChan:
+				collectTypeRefs(v.(ssa.Value).Type(), callerPkg, targetPaths, used)
+			case *ssa.FieldAddr:
+				collectTypeRefs(v.X.Type(), callerPkg, targetPaths, used)
+			case *ssa.Field:
+				collectTypeRefs(v.X.Type(), callerPkg, targetPaths, used)
 			}
 		}
 	}
 }
 
 func collectTypeRefs(t types.Type, callerPkg string, targetPaths, used map[string]bool) {
-	switch t := t.(type) {
+	switch tp := t.(type) {
 	case *types.Named:
-		if t.Obj() != nil && t.Obj().Pkg() != nil {
-			pkgPath := t.Obj().Pkg().Path()
-			if targetPaths[pkgPath] && callerPkg != pkgPath && token.IsExported(t.Obj().Name()) {
-				used[pkgPath+"."+t.Obj().Name()] = true
-			}
-		}
-		// Check type arguments for generics
-		if ta := t.TypeArgs(); ta != nil {
-			for i := range ta.Len() {
-				collectTypeRefs(ta.At(i), callerPkg, targetPaths, used)
-			}
-		}
-	case *types.Pointer:
-		collectTypeRefs(t.Elem(), callerPkg, targetPaths, used)
-	case *types.Slice:
-		collectTypeRefs(t.Elem(), callerPkg, targetPaths, used)
-	case *types.Array:
-		collectTypeRefs(t.Elem(), callerPkg, targetPaths, used)
+		collectNamedTypeRefs(tp, callerPkg, targetPaths, used)
+	case *types.Pointer, *types.Slice, *types.Array, *types.Chan:
+		type el interface{ Elem() types.Type }
+		collectTypeRefs(tp.(el).Elem(), callerPkg, targetPaths, used)
 	case *types.Map:
-		collectTypeRefs(t.Key(), callerPkg, targetPaths, used)
-		collectTypeRefs(t.Elem(), callerPkg, targetPaths, used)
-	case *types.Chan:
-		collectTypeRefs(t.Elem(), callerPkg, targetPaths, used)
+		collectTypeRefs(tp.Key(), callerPkg, targetPaths, used)
+		collectTypeRefs(tp.Elem(), callerPkg, targetPaths, used)
 	case *types.Signature:
-		params := t.Params()
-		for i := range params.Len() {
-			collectTypeRefs(params.At(i).Type(), callerPkg, targetPaths, used)
-		}
-		results := t.Results()
-		for i := range results.Len() {
-			collectTypeRefs(results.At(i).Type(), callerPkg, targetPaths, used)
-		}
+		collectSignatureTypeRefs(tp, callerPkg, targetPaths, used)
 	case *types.Struct:
-		for i := range t.NumFields() {
-			collectTypeRefs(t.Field(i).Type(), callerPkg, targetPaths, used)
+		for field := range tp.Fields() {
+			collectTypeRefs(field.Type(), callerPkg, targetPaths, used)
 		}
 	case *types.Interface:
-		for i := range t.NumMethods() {
-			collectTypeRefs(t.Method(i).Type(), callerPkg, targetPaths, used)
+		for method := range tp.Methods() {
+			collectTypeRefs(method.Type(), callerPkg, targetPaths, used)
 		}
 	}
 }
 
+func collectNamedTypeRefs(tp *types.Named, callerPkg string, targetPaths, used map[string]bool) {
+	if tp.Obj() != nil && tp.Obj().Pkg() != nil {
+		pkgPath := tp.Obj().Pkg().Path()
+		if targetPaths[pkgPath] && callerPkg != pkgPath && token.IsExported(tp.Obj().Name()) {
+			used[pkgPath+"."+tp.Obj().Name()] = true
+		}
+	}
+	ta := tp.TypeArgs()
+	if ta != nil {
+		for tat := range ta.Types() {
+			collectTypeRefs(tat, callerPkg, targetPaths, used)
+		}
+	}
+}
+
+func collectSignatureTypeRefs(tp *types.Signature, callerPkg string, targetPaths, used map[string]bool) {
+	for v := range tp.Params().Variables() {
+		collectTypeRefs(v.Type(), callerPkg, targetPaths, used)
+	}
+	for v := range tp.Results().Variables() {
+		collectTypeRefs(v.Type(), callerPkg, targetPaths, used)
+	}
+}
+
 func buildResult(
+	opts Options,
 	exports map[string]Export,
 	externallyUsed map[string]bool,
 	generated map[string]bool,
-	includeGenerated bool,
 	filter *regexp.Regexp,
-	exclude []string,
 ) *Result {
 	var result []Export
 
@@ -611,7 +522,7 @@ func buildResult(
 			continue
 		}
 		// Skip generated files unless includeGenerated is true
-		if !includeGenerated && generated[exp.Position.File] {
+		if !opts.Generated && generated[exp.Position.File] {
 			continue
 		}
 		// Apply filter
@@ -619,7 +530,7 @@ func buildResult(
 			continue
 		}
 		// Apply exclude
-		if len(exclude) > 0 && matchPackagePatterns(exclude, exp.PkgPath) {
+		if len(opts.Exclude) > 0 && matchPackagePatterns(opts.Exclude, exp.PkgPath) {
 			continue
 		}
 		result = append(result, exp)
@@ -631,8 +542,8 @@ func buildResult(
 // buildFilterPattern builds a regexp from the filter flag value.
 // The special value "<module>" builds a pattern from module paths.
 // An empty string returns nil (no filtering).
-func buildFilterPattern(filterFlag string, initial []*packages.Package) (*regexp.Regexp, error) {
-	filterPattern := filterFlag
+func buildFilterPattern(opts Options, initial []*packages.Package) (*regexp.Regexp, error) {
+	filterPattern := opts.Filter
 	if filterPattern == "" {
 		return nil, nil
 	}
@@ -676,8 +587,8 @@ func matchPattern(pattern, pkgPath string) bool {
 	}
 
 	// Handle "..." suffix - matches package and all subpackages
-	if strings.HasSuffix(pattern, "/...") {
-		prefix := strings.TrimSuffix(pattern, "/...")
+	prefix, ok := strings.CutSuffix(pattern, "/...")
+	if ok {
 		return pkgPath == prefix || strings.HasPrefix(pkgPath, prefix+"/")
 	}
 
