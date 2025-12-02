@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -115,54 +118,37 @@ func printResult(stdout io.Writer, result *overexported.Result) error {
 	}
 
 	// Group by package
-	pkgSet := make(map[string]bool)
+	byPkg := make(map[string][]overexported.Export)
 	for _, exp := range result.Exports {
-		pkgSet[exp.PkgPath] = true
+		byPkg[exp.PkgPath] = append(byPkg[exp.PkgPath], exp)
 	}
 
-	var pkgs []string
-	for pkg := range pkgSet {
-		pkgs = append(pkgs, pkg)
-	}
-	slices.Sort(pkgs)
+	var buf bytes.Buffer
+	for _, pkg := range slices.Sorted(maps.Keys(byPkg)) {
+		fmt.Fprintf(&buf, "\n%s:\n", pkg)
+		fmt.Fprintln(&buf, "  Can be unexported (only used internally):")
 
-	for _, pkg := range pkgs {
-		_, err = fmt.Fprintf(stdout, "\n%s:\n", pkg)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(stdout, "  Can be unexported (only used internally):")
-		if err != nil {
-			return err
-		}
-
-		var pkgExports []overexported.Export
-		for _, exp := range result.Exports {
-			if exp.PkgPath == pkg {
-				pkgExports = append(pkgExports, exp)
-			}
-		}
-		slices.SortFunc(pkgExports, func(a, b overexported.Export) int {
-			return strings.Compare(a.Name, b.Name)
+		slices.SortFunc(byPkg[pkg], func(a, b overexported.Export) int {
+			return cmp.Compare(a.Name, b.Name)
 		})
-
-		for _, exp := range pkgExports {
-			var relPath string
-			relPath, err = filepath.Rel(cwd, exp.Position.File)
-			if err != nil {
+		for _, exp := range byPkg[pkg] {
+			relPath, relErr := filepath.Rel(cwd, exp.Position.File)
+			if relErr != nil {
 				relPath = exp.Position.File
 			}
-			_, err = fmt.Fprintf(stdout, "    %s (%s) ./%s:%d\n", exp.Name, exp.Kind, relPath, exp.Position.Line)
-			if err != nil {
-				return err
-			}
+			fmt.Fprintf(&buf, "    %s (%s) ./%s:%d\n", exp.Name, exp.Kind, relPath, exp.Position.Line)
 		}
 	}
-	return nil
+	_, err = stdout.Write(buf.Bytes())
+	return err
 }
 
 func printResultJSON(stdout io.Writer, result *overexported.Result) error {
+	exports := result.Exports
+	if exports == nil {
+		exports = []overexported.Export{}
+	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(result.Exports)
+	return enc.Encode(exports)
 }
