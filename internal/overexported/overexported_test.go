@@ -9,9 +9,8 @@ import (
 )
 
 func TestRun(t *testing.T) {
-	t.Chdir("testdata/foo")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/foo"})
 	require.NoError(t, err)
 	require.Len(t, got.Exports, 1)
 	assert.Equal(t, "Bar", got.Exports[0].Name)
@@ -19,9 +18,8 @@ func TestRun(t *testing.T) {
 }
 
 func TestRun_TypesAndMethods(t *testing.T) {
-	t.Chdir("testdata/types")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/types"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -39,9 +37,8 @@ func TestRun_TypesAndMethods(t *testing.T) {
 }
 
 func TestRun_InterfaceSatisfaction(t *testing.T) {
-	t.Chdir("testdata/interfaces")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/interfaces"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -60,9 +57,8 @@ func TestRun_InterfaceSatisfaction(t *testing.T) {
 }
 
 func TestRun_ConstsAndVars(t *testing.T) {
-	t.Chdir("testdata/constvars")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/constvars"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -79,9 +75,8 @@ func TestRun_ConstsAndVars(t *testing.T) {
 }
 
 func TestRun_GeneratedFiles(t *testing.T) {
-	t.Chdir("testdata/generated")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/generated"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -98,9 +93,8 @@ func TestRun_GeneratedFiles(t *testing.T) {
 }
 
 func TestRun_GeneratedFiles_IncludeGenerated(t *testing.T) {
-	t.Chdir("testdata/generated")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true, Generated: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Generated: true, Dir: "testdata/generated"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -119,9 +113,8 @@ func TestRun_GeneratedFiles_IncludeGenerated(t *testing.T) {
 }
 
 func TestRun_ExternalTestPackage(t *testing.T) {
-	t.Chdir("testdata/external_test")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/external_test"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -141,10 +134,9 @@ func TestRun_ExternalTestPackage(t *testing.T) {
 }
 
 func TestRun_ExternalTestPackage_NoTest(t *testing.T) {
-	t.Chdir("testdata/external_test")
-
+	t.Parallel()
 	// Without Test: true, functions only used by test files should be reported
-	got, err := Run([]string{"./..."}, &Options{Test: false})
+	got, err := Run([]string{"./..."}, &Options{Test: false, Dir: "testdata/external_test"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -163,9 +155,10 @@ func TestRun_ExternalTestPackage_NoTest(t *testing.T) {
 }
 
 func TestRun_NilOptions(t *testing.T) {
+	// This test can't use t.Parallel() because it uses t.Chdir
+	// (we can't pass Dir with nil options)
 	t.Chdir("testdata/external_test")
 
-	// nil options should default to Test: false
 	got, err := Run([]string{"./..."}, nil)
 	require.NoError(t, err)
 
@@ -176,9 +169,8 @@ func TestRun_NilOptions(t *testing.T) {
 }
 
 func TestRun_Generics(t *testing.T) {
-	t.Chdir("testdata/generics")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/generics"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -194,9 +186,8 @@ func TestRun_Generics(t *testing.T) {
 }
 
 func TestRun_TypeReferences(t *testing.T) {
-	t.Chdir("testdata/typerefs")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/typerefs"})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -218,10 +209,9 @@ func TestRun_TypeReferences(t *testing.T) {
 }
 
 func TestRun_TargetPatternFiltering(t *testing.T) {
-	t.Chdir("testdata/foo")
-
+	t.Parallel()
 	// Only analyze the foo package, not cmd/foo
-	got, err := Run([]string{"foo"}, &Options{Test: true})
+	got, err := Run([]string{"foo"}, &Options{Test: true, Dir: "testdata/foo"})
 	require.NoError(t, err)
 
 	// Should still find Bar as unused since it's only used internally
@@ -230,18 +220,16 @@ func TestRun_TargetPatternFiltering(t *testing.T) {
 }
 
 func TestRun_EmptyResult(t *testing.T) {
-	t.Chdir("testdata/foo")
-
+	t.Parallel()
 	// When all exports are used, result should be empty
-	got, err := Run([]string{"foo/cmd/foo"}, &Options{Test: true})
+	got, err := Run([]string{"foo/cmd/foo"}, &Options{Test: true, Dir: "testdata/foo"})
 	require.NoError(t, err)
 	assert.Empty(t, got.Exports)
 }
 
 func TestExport_Fields(t *testing.T) {
-	t.Chdir("testdata/types")
-
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	t.Parallel()
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/types"})
 	require.NoError(t, err)
 	require.NotEmpty(t, got.Exports)
 
@@ -261,41 +249,38 @@ func TestExport_Fields(t *testing.T) {
 }
 
 func TestRun_Filter(t *testing.T) {
-	t.Chdir("testdata/foo")
-
+	t.Parallel()
 	// Without filter, should find Bar
-	got, err := Run([]string{"./..."}, &Options{Test: true})
+	got, err := Run([]string{"./..."}, &Options{Test: true, Dir: "testdata/foo"})
 	require.NoError(t, err)
 	names := exportNames(got)
 	assert.Contains(t, names, "Bar")
 
 	// With filter that doesn't match, should find nothing
-	got, err = Run([]string{"./..."}, &Options{Test: true, Filter: "^nonexistent$"})
+	got, err = Run([]string{"./..."}, &Options{Test: true, Filter: "^nonexistent$", Dir: "testdata/foo"})
 	require.NoError(t, err)
 	assert.Empty(t, got.Exports)
 
 	// With filter that matches foo package
-	got, err = Run([]string{"./..."}, &Options{Test: true, Filter: "^foo$"})
+	got, err = Run([]string{"./..."}, &Options{Test: true, Filter: "^foo$", Dir: "testdata/foo"})
 	require.NoError(t, err)
 	names = exportNames(got)
 	assert.Contains(t, names, "Bar")
 }
 
 func TestRun_Filter_Module(t *testing.T) {
-	t.Chdir("testdata/foo")
-
+	t.Parallel()
 	// With <module> filter, should find Bar (module is "foo")
-	got, err := Run([]string{"./..."}, &Options{Test: true, Filter: "<module>"})
+	got, err := Run([]string{"./..."}, &Options{Test: true, Filter: "<module>", Dir: "testdata/foo"})
 	require.NoError(t, err)
 	names := exportNames(got)
 	assert.Contains(t, names, "Bar")
 }
 
 func TestRun_Filter_InvalidRegex(t *testing.T) {
-	t.Chdir("testdata/foo")
-
+	t.Parallel()
 	// Invalid regex should return error
-	_, err := Run([]string{"./..."}, &Options{Test: true, Filter: "["})
+	_, err := Run([]string{"./..."}, &Options{Test: true, Filter: "[", Dir: "testdata/foo"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid filter pattern")
 }

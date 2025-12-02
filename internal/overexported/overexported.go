@@ -44,6 +44,9 @@ type Options struct {
 	// The special value "<module>" reports only packages matching the
 	// modules of all analyzed packages.
 	Filter string
+	// Dir is the directory to use for the analysis. If empty, the current
+	// working directory is used.
+	Dir string
 }
 
 func Run(patterns []string, opts *Options) (*Result, error) {
@@ -54,6 +57,7 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	cfg := &packages.Config{
 		Mode:  packages.LoadAllSyntax | packages.NeedModule,
 		Tests: opts.Test,
+		Dir:   opts.Dir,
 	}
 	allPkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
@@ -64,7 +68,7 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	}
 
 	// Build target package paths from patterns
-	targetPkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName}, patterns...)
+	targetPkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName, Dir: opts.Dir}, patterns...)
 	if err != nil {
 		return nil, fmt.Errorf("load target patterns: %w", err)
 	}
