@@ -15,7 +15,7 @@ bindown dependency add overexported --source overexported -y
 Usage: overexported <packages> ... [flags]
 
 Arguments:
-  <packages> ...    Package Packages to analyze.
+  <packages> ...    Package patterns to analyze.
 
 Flags:
   -h, --help                 Show context-sensitive help.

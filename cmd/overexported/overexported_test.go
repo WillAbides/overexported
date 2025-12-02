@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"path/filepath"
-	"runtime"
 	"slices"
 	"testing"
 
@@ -12,13 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/willabides/overexported/internal/overexported"
 )
-
-var testdataDir string
-
-func init() {
-	_, thisFile, _, _ := runtime.Caller(0)
-	testdataDir = filepath.Join(filepath.Dir(thisFile), "..", "..", "internal", "overexported", "testdata")
-}
 
 func runOverexported(t *testing.T, args ...string) (stdout string, err error) {
 	t.Helper()
@@ -45,7 +36,7 @@ func exportNames(exports []overexported.Export) []string {
 
 func TestBasic(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/foo", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -56,7 +47,7 @@ func TestBasic(t *testing.T) {
 
 func TestTypesAndMethods(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "types"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/types", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -76,7 +67,7 @@ func TestTypesAndMethods(t *testing.T) {
 
 func TestInterfaceSatisfaction(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "interfaces"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/interfaces", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -97,7 +88,7 @@ func TestInterfaceSatisfaction(t *testing.T) {
 
 func TestConstsAndVars(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "constvars"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/constvars", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -116,7 +107,7 @@ func TestConstsAndVars(t *testing.T) {
 
 func TestGeneratedFiles(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "generated"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/generated", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -135,7 +126,7 @@ func TestGeneratedFiles(t *testing.T) {
 
 func TestGeneratedFiles_IncludeGenerated(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "generated"), "--json", "--test", "--generated", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/generated", "--json", "--test", "--generated", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -156,7 +147,7 @@ func TestGeneratedFiles_IncludeGenerated(t *testing.T) {
 
 func TestExternalTestPackage(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "external_test"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/external_test", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -179,7 +170,7 @@ func TestExternalTestPackage(t *testing.T) {
 func TestExternalTestPackage_NoTest(t *testing.T) {
 	t.Parallel()
 	// Without --test, functions only used by test files should be reported
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "external_test"), "--json", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/external_test", "--json", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -200,7 +191,7 @@ func TestExternalTestPackage_NoTest(t *testing.T) {
 
 func TestGenerics(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "generics"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/generics", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -217,7 +208,7 @@ func TestGenerics(t *testing.T) {
 
 func TestTypeReferences(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "typerefs"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/typerefs", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -242,7 +233,7 @@ func TestTypeReferences(t *testing.T) {
 func TestTargetPatternFiltering(t *testing.T) {
 	t.Parallel()
 	// Only analyze the baz/foo package, not baz/foo/cmd/foo
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--json", "--test", "baz/foo")
+	stdout, err := runOverexported(t, "-C", "testdata/foo", "--json", "--test", "baz/foo")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -255,7 +246,7 @@ func TestTargetPatternFiltering(t *testing.T) {
 func TestEmptyResult(t *testing.T) {
 	t.Parallel()
 	// When all exports are used, result should be empty
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--json", "--test", "baz/foo/cmd/foo")
+	stdout, err := runOverexported(t, "-C", "testdata/foo", "--json", "--test", "baz/foo/cmd/foo")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -264,7 +255,7 @@ func TestEmptyResult(t *testing.T) {
 
 func TestExportFields(t *testing.T) {
 	t.Parallel()
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "types"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/types", "--json", "--test", "./...")
 	require.NoError(t, err)
 
 	exports := parseJSONOutput(t, stdout)
@@ -288,20 +279,20 @@ func TestExportFields(t *testing.T) {
 func TestFilter(t *testing.T) {
 	t.Parallel()
 	// Without filter (default is <module>), should find Bar
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--json", "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/foo", "--json", "--test", "./...")
 	require.NoError(t, err)
 	exports := parseJSONOutput(t, stdout)
 	names := exportNames(exports)
 	assert.Contains(t, names, "Bar")
 
 	// With filter that doesn't match, should find nothing
-	stdout, err = runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--json", "--test", "--filter=^nonexistent$", "./...")
+	stdout, err = runOverexported(t, "-C", "testdata/foo", "--json", "--test", "--filter=^nonexistent$", "./...")
 	require.NoError(t, err)
 	exports = parseJSONOutput(t, stdout)
 	assert.Empty(t, exports)
 
 	// With filter that matches baz/foo package
-	stdout, err = runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--json", "--test", "--filter=^baz/foo$", "./...")
+	stdout, err = runOverexported(t, "-C", "testdata/foo", "--json", "--test", "--filter=^baz/foo$", "./...")
 	require.NoError(t, err)
 	exports = parseJSONOutput(t, stdout)
 	names = exportNames(exports)
@@ -311,7 +302,7 @@ func TestFilter(t *testing.T) {
 func TestFilter_InvalidRegex(t *testing.T) {
 	t.Parallel()
 	// Invalid regex should return error
-	_, err := runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--json", "--test", "--filter=[", "./...")
+	_, err := runOverexported(t, "-C", "testdata/foo", "--json", "--test", "--filter=[", "./...")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid filter pattern")
 }
@@ -319,7 +310,7 @@ func TestFilter_InvalidRegex(t *testing.T) {
 func TestTextOutput(t *testing.T) {
 	t.Parallel()
 	// Test that text output works (no --json flag)
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--test", "./...")
+	stdout, err := runOverexported(t, "-C", "testdata/foo", "--test", "./...")
 	require.NoError(t, err)
 
 	// Should contain package name and Bar
@@ -331,7 +322,7 @@ func TestTextOutput(t *testing.T) {
 func TestEmptyTextOutput(t *testing.T) {
 	t.Parallel()
 	// When all exports are used, should show "No over-exported" message
-	stdout, err := runOverexported(t, "-C", filepath.Join(testdataDir, "foo"), "--test", "baz/foo/cmd/foo")
+	stdout, err := runOverexported(t, "-C", "testdata/foo", "--test", "baz/foo/cmd/foo")
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "No over-exported identifiers found")
 }

@@ -19,7 +19,7 @@ type cliOptions struct {
 	Generated bool     `help:"Include exports in generated Go files."`
 	JSON      bool     `help:"Output JSON records."`
 	Filter    string   `default:"<module>" help:"Report only packages matching this regular expression. '<module>' matches the modules of all analyzed packages."`
-	Packages  []string `arg:"" required:"" help:"Package Packages to analyze."`
+	Packages  []string `arg:"" required:"" help:"Package patterns to analyze."`
 }
 
 func main() {
