@@ -32,7 +32,9 @@ func main() {
 
 func run(stdout io.Writer, args []string) error {
 	var cli cliOptions
-	p, err := kong.New(&cli)
+	p, err := kong.New(&cli,
+		kong.Description("Find exported Go identifiers that are not used outside their package and could be unexported."),
+	)
 	if err != nil {
 		return err
 	}

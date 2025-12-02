@@ -14,6 +14,8 @@ bindown dependency add overexported --source overexported -y
 ```
 Usage: overexported <packages> ... [flags]
 
+Find exported Go identifiers that are not used outside their package and could be unexported.
+
 Arguments:
   <packages> ...    Package patterns to analyze.
 
