@@ -15,7 +15,8 @@ var cli struct {
 	Chdir     string   `short:"C" help:"Change to this directory before running."`
 	Test      bool     `help:"Include test packages and executables in the analysis."`
 	Generated bool     `help:"Include exports in generated Go files."`
-	Patterns  []string `arg:"" required:"" help:"Package patterns to analyze."`
+	Filter    string   `default:"<module>" help:"Report only packages matching this regular expression. '<module>' matches the modules of all analyzed packages."`
+	Packages  []string `arg:"" required:"" help:"Package Packages to analyze."`
 }
 
 func main() {
@@ -27,9 +28,10 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	result, err := overexported.Run(cli.Patterns, &overexported.Options{
+	result, err := overexported.Run(cli.Packages, &overexported.Options{
 		Test:      cli.Test,
 		Generated: cli.Generated,
+		Filter:    cli.Filter,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

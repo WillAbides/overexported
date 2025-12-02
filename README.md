@@ -12,16 +12,18 @@ bindown dependency add overexported --source overexported -y
 <!--- start usage output --->
 
 ```
-Usage: overexported <patterns> ... [flags]
+Usage: overexported <packages> ... [flags]
 
 Arguments:
-  <patterns> ...    Package patterns to analyze.
+  <packages> ...    Package Packages to analyze.
 
 Flags:
-  -h, --help            Show context-sensitive help.
-  -C, --chdir=STRING    Change to this directory before running.
-      --test            Include test packages and executables in the analysis.
-      --generated       Include exports in generated Go files.
+  -h, --help                 Show context-sensitive help.
+  -C, --chdir=STRING         Change to this directory before running.
+      --test                 Include test packages and executables in the analysis.
+      --generated            Include exports in generated Go files.
+      --filter="<module>"    Report only packages matching this regular expression. '<module>'
+                             matches the modules of all analyzed packages.
 ```
 
 <!--- end usage output --->
