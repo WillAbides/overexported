@@ -44,6 +44,9 @@ type Options struct {
 	// The special value "<module>" reports only packages matching the
 	// modules of all analyzed packages.
 	Filter string
+	// Exclude is a list of package patterns to exclude from the results.
+	// Patterns use the same syntax as 'go list' (e.g., "./...", "github.com/foo/...").
+	Exclude []string
 	// Dir is the directory to use for the analysis. If empty, the current
 	// working directory is used.
 	Dir string
@@ -165,7 +168,7 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	})
 
 	// Build result
-	return buildResult(exports, externallyUsed, generated, opts.Generated, filter), nil
+	return buildResult(exports, externallyUsed, generated, opts.Generated, filter, opts.Exclude), nil
 }
 
 func collectExportsSSA(
@@ -599,6 +602,7 @@ func buildResult(
 	generated map[string]bool,
 	includeGenerated bool,
 	filter *regexp.Regexp,
+	exclude []string,
 ) *Result {
 	var result []Export
 
@@ -612,6 +616,10 @@ func buildResult(
 		}
 		// Apply filter
 		if filter != nil && !filter.MatchString(exp.PkgPath) {
+			continue
+		}
+		// Apply exclude
+		if len(exclude) > 0 && matchPackagePatterns(exclude, exp.PkgPath) {
 			continue
 		}
 		result = append(result, exp)
