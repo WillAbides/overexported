@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,7 +13,7 @@ import (
 	"github.com/willabides/overexported/internal/overexported"
 )
 
-var cli struct {
+type cliOptions struct {
 	Chdir     string   `short:"C" help:"Change to this directory before running."`
 	Test      bool     `help:"Include test packages and executables in the analysis."`
 	Generated bool     `help:"Include exports in generated Go files."`
@@ -22,34 +23,42 @@ var cli struct {
 }
 
 func main() {
-	kong.Parse(&cli)
-	if cli.Chdir != "" {
-		err := os.Chdir(cli.Chdir)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+	err := run(os.Stdout, os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(stdout io.Writer, args []string) error {
+	var cli cliOptions
+	p, err := kong.New(&cli)
+	if err != nil {
+		return err
+	}
+	_, err = p.Parse(args)
+	if err != nil {
+		return err
 	}
 	result, err := overexported.Run(cli.Packages, &overexported.Options{
 		Test:      cli.Test,
 		Generated: cli.Generated,
 		Filter:    cli.Filter,
+		Dir:       cli.Chdir,
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
-	if cli.JSON {
-		printResultJSON(result)
-	} else {
-		printResult(result)
+	if !cli.JSON {
+		return printResult(stdout, result)
 	}
+	return printResultJSON(stdout, result)
 }
 
-func printResult(result *overexported.Result) {
+func printResult(stdout io.Writer, result *overexported.Result) error {
 	if len(result.Exports) == 0 {
-		fmt.Println("All exports are used by external packages.")
-		return
+		_, err := fmt.Fprintln(stdout, "No over-exported identifiers found.")
+		return err
 	}
 
 	cwd, err := os.Getwd()
@@ -70,8 +79,14 @@ func printResult(result *overexported.Result) {
 	slices.Sort(pkgs)
 
 	for _, pkg := range pkgs {
-		fmt.Printf("\n%s:\n", pkg)
-		fmt.Println("  Can be unexported (only used internally):")
+		_, err = fmt.Fprintf(stdout, "\n%s:\n", pkg)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(stdout, "  Can be unexported (only used internally):")
+		if err != nil {
+			return err
+		}
 
 		var pkgExports []overexported.Export
 		for _, exp := range result.Exports {
@@ -84,25 +99,22 @@ func printResult(result *overexported.Result) {
 		})
 
 		for _, exp := range pkgExports {
-			relPath, err := filepath.Rel(cwd, exp.Position.File)
+			var relPath string
+			relPath, err = filepath.Rel(cwd, exp.Position.File)
 			if err != nil {
 				relPath = exp.Position.File
 			}
-			fmt.Printf("    %s (%s) ./%s:%d\n", exp.Name, exp.Kind, relPath, exp.Position.Line)
+			_, err = fmt.Fprintf(stdout, "    %s (%s) ./%s:%d\n", exp.Name, exp.Kind, relPath, exp.Position.Line)
+			if err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-func printResultJSON(result *overexported.Result) {
-	out, err := json.MarshalIndent(result.Exports, "", "\t")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	_, err = os.Stdout.Write(out)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	fmt.Println()
+func printResultJSON(stdout io.Writer, result *overexported.Result) error {
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result.Exports)
 }
