@@ -262,6 +262,46 @@ func TestExport_Fields(t *testing.T) {
 	assert.Greater(t, exp.Position.Col, 0)
 }
 
+func TestRun_Filter(t *testing.T) {
+	t.Chdir("testdata/foo")
+
+	// Without filter, should find Bar
+	got, err := Run([]string{"./..."}, &Options{Test: true})
+	require.NoError(t, err)
+	names := exportNames(got)
+	assert.Contains(t, names, "Bar")
+
+	// With filter that doesn't match, should find nothing
+	got, err = Run([]string{"./..."}, &Options{Test: true, Filter: "^nonexistent$"})
+	require.NoError(t, err)
+	assert.Empty(t, got.Exports)
+
+	// With filter that matches foo package
+	got, err = Run([]string{"./..."}, &Options{Test: true, Filter: "^foo$"})
+	require.NoError(t, err)
+	names = exportNames(got)
+	assert.Contains(t, names, "Bar")
+}
+
+func TestRun_Filter_Module(t *testing.T) {
+	t.Chdir("testdata/foo")
+
+	// With <module> filter, should find Bar (module is "foo")
+	got, err := Run([]string{"./..."}, &Options{Test: true, Filter: "<module>"})
+	require.NoError(t, err)
+	names := exportNames(got)
+	assert.Contains(t, names, "Bar")
+}
+
+func TestRun_Filter_InvalidRegex(t *testing.T) {
+	t.Chdir("testdata/foo")
+
+	// Invalid regex should return error
+	_, err := Run([]string{"./..."}, &Options{Test: true, Filter: "["})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid filter pattern")
+}
+
 func exportNames(r *Result) []string {
 	names := make([]string, len(r.Exports))
 	for i, e := range r.Exports {

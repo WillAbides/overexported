@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"regexp"
 	"strings"
 
 	"golang.org/x/tools/go/callgraph/rta"
@@ -39,6 +40,10 @@ type Options struct {
 	Test bool
 	// Generated includes exports in generated Go files.
 	Generated bool
+	// Filter is a regular expression to filter which packages to report.
+	// The special value "<module>" (the default) reports only packages
+	// matching the module of the first package.
+	Filter string
 }
 
 func Run(patterns []string, opts *Options) (*Result, error) {
@@ -47,7 +52,7 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	}
 	// Load all packages with full syntax for SSA
 	cfg := &packages.Config{
-		Mode:  packages.LoadAllSyntax,
+		Mode:  packages.LoadAllSyntax | packages.NeedModule,
 		Tests: opts.Test,
 	}
 	allPkgs, err := packages.Load(cfg, "./...")
@@ -66,6 +71,12 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	targetPaths := make(map[string]bool)
 	for _, pkg := range targetPkgs {
 		targetPaths[pkg.PkgPath] = true
+	}
+
+	// Build filter pattern
+	filter, err := buildFilterPattern(opts.Filter, allPkgs)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build SSA program
@@ -127,7 +138,7 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	})
 
 	// Build result
-	return buildResult(exports, externallyUsed, externallyUsedPosn, generated, opts.Generated), nil
+	return buildResult(exports, externallyUsed, externallyUsedPosn, generated, opts.Generated, filter), nil
 }
 
 func collectExportsSSA(
@@ -569,6 +580,7 @@ func buildResult(
 	externallyUsedPosn map[token.Position]bool,
 	generated map[string]bool,
 	includeGenerated bool,
+	filter *regexp.Regexp,
 ) *Result {
 	// Convert position-based usage to keys that ignore Offset
 	usedPosnKeys := make(map[posnKey]bool)
@@ -596,8 +608,42 @@ func buildResult(
 		if !includeGenerated && generated[exp.Position.File] {
 			continue
 		}
+		// Apply filter
+		if filter != nil && !filter.MatchString(exp.PkgPath) {
+			continue
+		}
 		result = append(result, exp)
 	}
 
 	return &Result{Exports: result}
+}
+
+// buildFilterPattern builds a regexp from the filter flag value.
+// The special value "<module>" builds a pattern from module paths.
+// An empty string returns nil (no filtering).
+func buildFilterPattern(filterFlag string, initial []*packages.Package) (*regexp.Regexp, error) {
+	filterPattern := filterFlag
+	if filterPattern == "" {
+		return nil, nil
+	}
+	if filterPattern == "<module>" {
+		seen := make(map[string]bool)
+		var patterns []string
+		for _, pkg := range initial {
+			if pkg.Module != nil && pkg.Module.Path != "" && !seen[pkg.Module.Path] {
+				seen[pkg.Module.Path] = true
+				patterns = append(patterns, regexp.QuoteMeta(pkg.Module.Path))
+			}
+		}
+
+		if len(patterns) == 0 {
+			return nil, nil
+		}
+		filterPattern = "^(" + strings.Join(patterns, "|") + ")\\b"
+	}
+	filter, err := regexp.Compile(filterPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid filter pattern: %w", err)
+	}
+	return filter, nil
 }
