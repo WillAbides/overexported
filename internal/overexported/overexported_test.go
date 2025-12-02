@@ -11,7 +11,7 @@ import (
 func TestRun(t *testing.T) {
 	t.Chdir("testdata/foo")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 	require.Len(t, got.Exports, 1)
 	assert.Equal(t, "Bar", got.Exports[0].Name)
@@ -21,7 +21,7 @@ func TestRun(t *testing.T) {
 func TestRun_TypesAndMethods(t *testing.T) {
 	t.Chdir("testdata/types")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -41,7 +41,7 @@ func TestRun_TypesAndMethods(t *testing.T) {
 func TestRun_InterfaceSatisfaction(t *testing.T) {
 	t.Chdir("testdata/interfaces")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -62,7 +62,7 @@ func TestRun_InterfaceSatisfaction(t *testing.T) {
 func TestRun_ConstsAndVars(t *testing.T) {
 	t.Chdir("testdata/constvars")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -81,7 +81,7 @@ func TestRun_ConstsAndVars(t *testing.T) {
 func TestRun_GeneratedFiles(t *testing.T) {
 	t.Chdir("testdata/generated")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -100,24 +100,66 @@ func TestRun_GeneratedFiles(t *testing.T) {
 func TestRun_ExternalTestPackage(t *testing.T) {
 	t.Chdir("testdata/external_test")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 
 	names := exportNames(got)
 
-	// NotUsedInTests should be reported
+	// NotUsedInTests should be reported (not used anywhere)
 	assert.Contains(t, names, "NotUsedInTests")
 
 	// UsedInExternalTest and UsedInInternalTest should NOT be reported
-	// (used by external test package and cmd)
+	// (used by cmd/main.go which is an external package)
 	assert.NotContains(t, names, "UsedInExternalTest")
 	assert.NotContains(t, names, "UsedInInternalTest")
+
+	// OnlyUsedInTests SHOULD be reported even with Test: true because
+	// it's only used by the external test package (lib_test), which is
+	// treated as the same package as lib for the purpose of determining
+	// external usage. The --test flag includes test packages in the analysis
+	// but doesn't change what counts as "external" usage.
+	assert.Contains(t, names, "OnlyUsedInTests")
+}
+
+func TestRun_ExternalTestPackage_NoTest(t *testing.T) {
+	t.Chdir("testdata/external_test")
+
+	// Without Test: true, functions only used by test files should be reported
+	got, err := Run([]string{"./..."}, &Options{Test: false})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// NotUsedInTests should still be reported (not used anywhere)
+	assert.Contains(t, names, "NotUsedInTests")
+
+	// UsedInExternalTest and UsedInInternalTest are used by cmd/main.go,
+	// so they should NOT be reported even without test packages
+	assert.NotContains(t, names, "UsedInExternalTest")
+	assert.NotContains(t, names, "UsedInInternalTest")
+
+	// OnlyUsedInTests SHOULD be reported when Test: false
+	// (it's only used by test files which are excluded)
+	assert.Contains(t, names, "OnlyUsedInTests")
+}
+
+func TestRun_NilOptions(t *testing.T) {
+	t.Chdir("testdata/external_test")
+
+	// nil options should default to Test: false
+	got, err := Run([]string{"./..."}, nil)
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// OnlyUsedInTests should be reported (same as Test: false)
+	assert.Contains(t, names, "OnlyUsedInTests")
 }
 
 func TestRun_Generics(t *testing.T) {
 	t.Chdir("testdata/generics")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -135,7 +177,7 @@ func TestRun_Generics(t *testing.T) {
 func TestRun_TypeReferences(t *testing.T) {
 	t.Chdir("testdata/typerefs")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 
 	names := exportNames(got)
@@ -160,7 +202,7 @@ func TestRun_TargetPatternFiltering(t *testing.T) {
 	t.Chdir("testdata/foo")
 
 	// Only analyze the foo package, not cmd/foo
-	got, err := Run([]string{"foo"})
+	got, err := Run([]string{"foo"}, &Options{Test: true})
 	require.NoError(t, err)
 
 	// Should still find Bar as unused since it's only used internally
@@ -172,7 +214,7 @@ func TestRun_EmptyResult(t *testing.T) {
 	t.Chdir("testdata/foo")
 
 	// When all exports are used, result should be empty
-	got, err := Run([]string{"foo/cmd/foo"})
+	got, err := Run([]string{"foo/cmd/foo"}, &Options{Test: true})
 	require.NoError(t, err)
 	assert.Empty(t, got.Exports)
 }
@@ -180,7 +222,7 @@ func TestRun_EmptyResult(t *testing.T) {
 func TestExport_Fields(t *testing.T) {
 	t.Chdir("testdata/types")
 
-	got, err := Run([]string{"./..."})
+	got, err := Run([]string{"./..."}, &Options{Test: true})
 	require.NoError(t, err)
 	require.NotEmpty(t, got.Exports)
 

@@ -12,12 +12,15 @@ import (
 )
 
 var cli struct {
+	Test     bool     `help:"Include test packages and executables in the analysis."`
 	Patterns []string `arg:"" required:"" help:"Package patterns to analyze."`
 }
 
 func main() {
 	kong.Parse(&cli)
-	result, err := overexported.Run(cli.Patterns)
+	result, err := overexported.Run(cli.Patterns, &overexported.Options{
+		Test: cli.Test,
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

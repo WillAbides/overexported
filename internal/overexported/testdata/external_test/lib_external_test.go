@@ -8,4 +8,5 @@ import (
 
 func TestExternal(t *testing.T) {
 	_ = lib.UsedInExternalTest()
+	_ = lib.OnlyUsedInTests()
 }

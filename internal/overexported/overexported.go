@@ -33,11 +33,20 @@ type Result struct {
 	Exports []Export `json:"exports"`
 }
 
-func Run(patterns []string) (*Result, error) {
+// Options configures the analysis.
+type Options struct {
+	// Test includes test packages and executables in the analysis.
+	Test bool
+}
+
+func Run(patterns []string, opts *Options) (*Result, error) {
+	if opts == nil {
+		opts = &Options{}
+	}
 	// Load all packages with full syntax for SSA
 	cfg := &packages.Config{
 		Mode:  packages.LoadAllSyntax,
-		Tests: true,
+		Tests: opts.Test,
 	}
 	allPkgs, err := packages.Load(cfg, "./...")
 	if err != nil {

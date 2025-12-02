@@ -14,3 +14,8 @@ func UsedInInternalTest() string {
 func NotUsedInTests() string {
 	return "unused"
 }
+
+// OnlyUsedInTests is only used by test files, not by cmd/main.go.
+func OnlyUsedInTests() string {
+	return "only tests"
+}
