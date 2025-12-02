@@ -602,7 +602,8 @@ var cwd = func() string {
 func toJSONPosition(posn token.Position) jsonPosition {
 	// Use cwd-relative filename if possible.
 	filename := posn.Filename
-	if rel, err := filepath.Rel(cwd, filename); err == nil && !strings.HasPrefix(rel, "..") {
+	rel, err := filepath.Rel(cwd, filename)
+	if err == nil && !strings.HasPrefix(rel, "..") {
 		filename = rel
 	}
 

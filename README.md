@@ -12,13 +12,15 @@ bindown dependency add overexported --source overexported -y
 <!--- start usage output --->
 
 ```
-Usage: overexported <patterns> ...
+Usage: overexported <patterns> ... [flags]
 
 Arguments:
   <patterns> ...    Package patterns to analyze.
 
 Flags:
-  -h, --help    Show context-sensitive help.
+  -h, --help            Show context-sensitive help.
+  -C, --chdir=STRING    Change to this directory before running.
+      --test            Include test packages and executables in the analysis.
 ```
 
 <!--- end usage output --->

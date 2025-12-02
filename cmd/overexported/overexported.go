@@ -12,12 +12,20 @@ import (
 )
 
 var cli struct {
+	Chdir    string   `short:"C" help:"Change to this directory before running."`
 	Test     bool     `help:"Include test packages and executables in the analysis."`
 	Patterns []string `arg:"" required:"" help:"Package patterns to analyze."`
 }
 
 func main() {
 	kong.Parse(&cli)
+	if cli.Chdir != "" {
+		err := os.Chdir(cli.Chdir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	result, err := overexported.Run(cli.Patterns, &overexported.Options{
 		Test: cli.Test,
 	})
