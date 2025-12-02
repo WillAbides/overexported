@@ -97,6 +97,27 @@ func TestRun_GeneratedFiles(t *testing.T) {
 	assert.NotContains(t, names, "GeneratedUsed")
 }
 
+func TestRun_GeneratedFiles_IncludeGenerated(t *testing.T) {
+	t.Chdir("testdata/generated")
+
+	got, err := Run([]string{"./..."}, &Options{Test: true, Generated: true})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// ManualUnused should be reported (in hand-written file)
+	assert.Contains(t, names, "ManualUnused")
+
+	// ManualUsed should NOT be reported (used externally)
+	assert.NotContains(t, names, "ManualUsed")
+
+	// With Generated: true, unused exports in generated files SHOULD be reported
+	assert.Contains(t, names, "GeneratedUnused")
+
+	// GeneratedUsed should NOT be reported (used externally)
+	assert.NotContains(t, names, "GeneratedUsed")
+}
+
 func TestRun_ExternalTestPackage(t *testing.T) {
 	t.Chdir("testdata/external_test")
 

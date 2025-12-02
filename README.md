@@ -21,6 +21,7 @@ Flags:
   -h, --help            Show context-sensitive help.
   -C, --chdir=STRING    Change to this directory before running.
       --test            Include test packages and executables in the analysis.
+      --generated       Include exports in generated Go files.
 ```
 
 <!--- end usage output --->

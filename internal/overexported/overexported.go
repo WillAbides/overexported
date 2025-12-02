@@ -37,6 +37,8 @@ type Result struct {
 type Options struct {
 	// Test includes test packages and executables in the analysis.
 	Test bool
+	// Generated includes exports in generated Go files.
+	Generated bool
 }
 
 func Run(patterns []string, opts *Options) (*Result, error) {
@@ -71,7 +73,7 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	prog.Build()
 
 	// Collect exports from target packages
-	exports, generated := collectExportsSSA(prog, allPkgs, targetPaths)
+	exports, generated := collectExportsSSA(prog, allPkgs, targetPaths, opts.Generated)
 	if len(exports) == 0 {
 		return &Result{}, nil
 	}
@@ -125,13 +127,14 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	})
 
 	// Build result
-	return buildResult(exports, externallyUsed, externallyUsedPosn, generated), nil
+	return buildResult(exports, externallyUsed, externallyUsedPosn, generated, opts.Generated), nil
 }
 
 func collectExportsSSA(
 	prog *ssa.Program,
 	pkgs []*packages.Package,
 	targetPaths map[string]bool,
+	includeGenerated bool,
 ) (exports map[string]Export, generated map[string]bool) {
 	exports = make(map[string]Export)
 	generated = make(map[string]bool)
@@ -153,7 +156,12 @@ func collectExportsSSA(
 			continue
 		}
 
-		collectPackageExports(prog, pkg.PkgPath, ssaPkg, generated, exports)
+		// Pass nil for generated map when includeGenerated is true to skip filtering
+		genMap := generated
+		if includeGenerated {
+			genMap = nil
+		}
+		collectPackageExports(prog, pkg.PkgPath, ssaPkg, genMap, exports)
 	}
 	return exports, generated
 }
@@ -560,6 +568,7 @@ func buildResult(
 	externallyUsed map[string]bool,
 	externallyUsedPosn map[token.Position]bool,
 	generated map[string]bool,
+	includeGenerated bool,
 ) *Result {
 	// Convert position-based usage to keys that ignore Offset
 	usedPosnKeys := make(map[posnKey]bool)
@@ -583,8 +592,8 @@ func buildResult(
 		if usedPosnKeys[pk] {
 			continue
 		}
-		// Skip generated files
-		if generated[exp.Position.File] {
+		// Skip generated files unless includeGenerated is true
+		if !includeGenerated && generated[exp.Position.File] {
 			continue
 		}
 		result = append(result, exp)

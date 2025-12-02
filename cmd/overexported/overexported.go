@@ -12,9 +12,10 @@ import (
 )
 
 var cli struct {
-	Chdir    string   `short:"C" help:"Change to this directory before running."`
-	Test     bool     `help:"Include test packages and executables in the analysis."`
-	Patterns []string `arg:"" required:"" help:"Package patterns to analyze."`
+	Chdir     string   `short:"C" help:"Change to this directory before running."`
+	Test      bool     `help:"Include test packages and executables in the analysis."`
+	Generated bool     `help:"Include exports in generated Go files."`
+	Patterns  []string `arg:"" required:"" help:"Package patterns to analyze."`
 }
 
 func main() {
@@ -27,7 +28,8 @@ func main() {
 		}
 	}
 	result, err := overexported.Run(cli.Patterns, &overexported.Options{
-		Test: cli.Test,
+		Test:      cli.Test,
+		Generated: cli.Generated,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
