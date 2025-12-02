@@ -210,8 +210,8 @@ func TestRun_TypeReferences(t *testing.T) {
 
 func TestRun_TargetPatternFiltering(t *testing.T) {
 	t.Parallel()
-	// Only analyze the foo package, not cmd/foo
-	got, err := Run([]string{"foo"}, &Options{Test: true, Dir: "testdata/foo"})
+	// Only analyze the baz/foo package, not baz/foo/cmd/foo
+	got, err := Run([]string{"baz/foo"}, &Options{Test: true, Dir: "testdata/foo"})
 	require.NoError(t, err)
 
 	// Should still find Bar as unused since it's only used internally
@@ -222,7 +222,7 @@ func TestRun_TargetPatternFiltering(t *testing.T) {
 func TestRun_EmptyResult(t *testing.T) {
 	t.Parallel()
 	// When all exports are used, result should be empty
-	got, err := Run([]string{"foo/cmd/foo"}, &Options{Test: true, Dir: "testdata/foo"})
+	got, err := Run([]string{"baz/foo/cmd/foo"}, &Options{Test: true, Dir: "testdata/foo"})
 	require.NoError(t, err)
 	assert.Empty(t, got.Exports)
 }
@@ -261,8 +261,8 @@ func TestRun_Filter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got.Exports)
 
-	// With filter that matches foo package
-	got, err = Run([]string{"./..."}, &Options{Test: true, Filter: "^foo$", Dir: "testdata/foo"})
+	// With filter that matches baz/foo package
+	got, err = Run([]string{"./..."}, &Options{Test: true, Filter: "^baz/foo$", Dir: "testdata/foo"})
 	require.NoError(t, err)
 	names = exportNames(got)
 	assert.Contains(t, names, "Bar")
@@ -270,7 +270,7 @@ func TestRun_Filter(t *testing.T) {
 
 func TestRun_Filter_Module(t *testing.T) {
 	t.Parallel()
-	// With <module> filter, should find Bar (module is "foo")
+	// With <module> filter, should find Bar (module is "baz/foo")
 	got, err := Run([]string{"./..."}, &Options{Test: true, Filter: "<module>", Dir: "testdata/foo"})
 	require.NoError(t, err)
 	names := exportNames(got)
