@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"foo"
+	"baz/foo"
 )
 
 func main() {
