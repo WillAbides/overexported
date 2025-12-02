@@ -53,13 +53,28 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	if opts == nil {
 		opts = &Options{}
 	}
-	// Load all packages with full syntax for SSA
+
+	// Determine which packages to load. We need to load enough to find main
+	// packages for RTA analysis. If the pattern is already "./...", use it
+	// directly. Otherwise, load "./..." to ensure we find main packages.
+	loadPatterns := patterns
+	needsTargetMatching := false
+	for _, p := range patterns {
+		if p != "./..." && p != "..." {
+			loadPatterns = []string{"./..."}
+			needsTargetMatching = true
+			break
+		}
+	}
+
+	// Load packages with full syntax for SSA.
+	// We need LoadAllSyntax because RTA traverses into dependencies.
 	cfg := &packages.Config{
 		Mode:  packages.LoadAllSyntax | packages.NeedModule,
 		Tests: opts.Test,
 		Dir:   opts.Dir,
 	}
-	allPkgs, err := packages.Load(cfg, "./...")
+	allPkgs, err := packages.Load(cfg, loadPatterns...)
 	if err != nil {
 		return nil, fmt.Errorf("load packages: %w", err)
 	}
@@ -67,14 +82,19 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 		return nil, fmt.Errorf("packages contain errors")
 	}
 
-	// Build target package paths from patterns
-	targetPkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName, Dir: opts.Dir}, patterns...)
-	if err != nil {
-		return nil, fmt.Errorf("load target patterns: %w", err)
-	}
+	// Build target package paths. If we loaded exactly what the user requested,
+	// all loaded packages are targets. Otherwise, match patterns against loaded packages.
 	targetPaths := make(map[string]bool)
-	for _, pkg := range targetPkgs {
-		targetPaths[pkg.PkgPath] = true
+	if needsTargetMatching {
+		for _, pkg := range allPkgs {
+			if matchPackagePatterns(patterns, pkg.PkgPath) {
+				targetPaths[pkg.PkgPath] = true
+			}
+		}
+	} else {
+		for _, pkg := range allPkgs {
+			targetPaths[pkg.PkgPath] = true
+		}
 	}
 
 	// Build filter pattern
@@ -83,8 +103,11 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 		return nil, err
 	}
 
-	// Build SSA program
-	prog, pkgs := ssautil.AllPackages(allPkgs, ssa.InstantiateGenerics)
+	// Build SSA program.
+	// Use ssautil.Packages instead of AllPackages to only build SSA for
+	// the initial packages, not all dependencies. This significantly
+	// reduces memory usage and build time.
+	prog, pkgs := ssautil.Packages(allPkgs, ssa.InstantiateGenerics)
 	prog.Build()
 
 	// Collect exports from target packages
@@ -109,14 +132,14 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 		}
 	}
 
-	// Run RTA analysis
+	// Run RTA analysis. We need the call graph to properly track method calls.
 	res := rta.Analyze(roots, true)
 	if res == nil {
 		return nil, fmt.Errorf("RTA analysis failed")
 	}
 
-	// Find externally used exports via call graph
-	externallyUsed, externallyUsedPosn := findExternalUsageRTA(prog, res, targetPaths, opts.Test)
+	// Find externally used exports via reachable functions
+	externallyUsed := findExternalUsageRTA(res, targetPaths, opts.Test)
 
 	// Find externally used exports via TypesInfo.Uses (handles consts, vars, and other references)
 	findExternalUsageTypesInfo(allPkgs, targetPaths, externallyUsed, opts.Test)
@@ -142,7 +165,7 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	})
 
 	// Build result
-	return buildResult(exports, externallyUsed, externallyUsedPosn, generated, opts.Generated, filter), nil
+	return buildResult(exports, externallyUsed, generated, opts.Generated, filter), nil
 }
 
 func collectExportsSSA(
@@ -332,13 +355,11 @@ func collectConstExport(
 }
 
 func findExternalUsageRTA(
-	prog *ssa.Program,
 	res *rta.Result,
 	targetPaths map[string]bool,
 	includeTests bool,
-) (used map[string]bool, usedPosn map[token.Position]bool) {
-	used = make(map[string]bool)
-	usedPosn = make(map[token.Position]bool)
+) map[string]bool {
+	used := make(map[string]bool)
 
 	// Walk call graph edges to find cross-package calls
 	for fn, node := range res.CallGraph.Nodes {
@@ -376,13 +397,6 @@ func findExternalUsageRTA(
 				if key != "" {
 					used[key] = true
 				}
-				// Also mark by position for generic function support.
-				// When a generic function is instantiated (e.g., UsedGeneric[int]),
-				// the instantiated version shares the same source position as the
-				// original declaration, so we mark the original as used too.
-				if callee.Pos().IsValid() {
-					usedPosn[prog.Fset.Position(callee.Pos())] = true
-				}
 			}
 		}
 	}
@@ -405,7 +419,7 @@ func findExternalUsageRTA(
 		collectTypeRefsFromFunc(fn, callerPkg, targetPaths, used)
 	}
 
-	return used, usedPosn
+	return used
 }
 
 // getSSAPkgPath returns the package path for an SSA function.
@@ -579,44 +593,17 @@ func collectTypeRefs(t types.Type, callerPkg string, targetPaths, used map[strin
 	}
 }
 
-// posnKey creates a comparable key from a token.Position, ignoring Offset.
-// This is necessary because token.Position includes an Offset field that
-// varies based on how the position was obtained, but we only care about
-// file, line, and column for comparison.
-type posnKey struct {
-	Filename string
-	Line     int
-	Column   int
-}
-
 func buildResult(
 	exports map[string]Export,
 	externallyUsed map[string]bool,
-	externallyUsedPosn map[token.Position]bool,
 	generated map[string]bool,
 	includeGenerated bool,
 	filter *regexp.Regexp,
 ) *Result {
-	// Convert position-based usage to keys that ignore Offset
-	usedPosnKeys := make(map[posnKey]bool)
-	for posn := range externallyUsedPosn {
-		usedPosnKeys[posnKey{Filename: posn.Filename, Line: posn.Line, Column: posn.Column}] = true
-	}
-
 	var result []Export
 
 	for key, exp := range exports {
 		if externallyUsed[key] {
-			continue
-		}
-		// Check position-based usage (handles generics where instantiated
-		// versions share the same source position as the original)
-		pk := posnKey{
-			Filename: exp.Position.File,
-			Line:     exp.Position.Line,
-			Column:   exp.Position.Col,
-		}
-		if usedPosnKeys[pk] {
 			continue
 		}
 		// Skip generated files unless includeGenerated is true
@@ -661,4 +648,36 @@ func buildFilterPattern(filterFlag string, initial []*packages.Package) (*regexp
 		return nil, fmt.Errorf("invalid filter pattern: %w", err)
 	}
 	return filter, nil
+}
+
+// matchPackagePatterns checks if a package path matches any of the given patterns.
+func matchPackagePatterns(patterns []string, pkgPath string) bool {
+	for _, pattern := range patterns {
+		if matchPattern(pattern, pkgPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchPattern checks if a package path matches a Go package pattern.
+func matchPattern(pattern, pkgPath string) bool {
+	// Handle "./..." - matches everything
+	if pattern == "./..." {
+		return true
+	}
+
+	// Handle "..." suffix - matches package and all subpackages
+	if strings.HasSuffix(pattern, "/...") {
+		prefix := strings.TrimSuffix(pattern, "/...")
+		return pkgPath == prefix || strings.HasPrefix(pkgPath, prefix+"/")
+	}
+
+	// Handle "..." alone - matches everything
+	if pattern == "..." {
+		return true
+	}
+
+	// Exact match
+	return pattern == pkgPath
 }
