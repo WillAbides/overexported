@@ -24,7 +24,7 @@ $end_comment"
 if [ -f script/overexported ]; then
   USAGE_OUTPUT="
 \`\`\`
-$(COLUMNS=100 script/overexported --help)
+$(COLUMNS=90 script/overexported --help)
 \`\`\`
 "
 fi

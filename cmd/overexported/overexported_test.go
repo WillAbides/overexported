@@ -307,6 +307,84 @@ func TestFilter_InvalidRegex(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid filter pattern")
 }
 
+func TestExclude(t *testing.T) {
+	t.Parallel()
+	// Without exclude, constvars package has unused exports
+	stdout, err := runOverexported(t, "-C", "testdata/constvars", "--json", "--test", "./...")
+	require.NoError(t, err)
+	exports := parseJSONOutput(t, stdout)
+	names := exportNames(exports)
+	assert.Contains(t, names, "UnusedConst")
+	assert.Contains(t, names, "UnusedVar")
+	assert.Contains(t, names, "UnusedFunc")
+
+	// With exclude matching the constvars package exactly
+	stdout, err = runOverexported(t, "-C", "testdata/constvars", "--json", "--test", "--exclude=constvars", "./...")
+	require.NoError(t, err)
+	exports = parseJSONOutput(t, stdout)
+	assert.Empty(t, exports)
+}
+
+func TestExclude_WithEllipsis(t *testing.T) {
+	t.Parallel()
+	// Test exclude with ... pattern
+	stdout, err := runOverexported(t, "-C", "testdata/types", "--json", "--test", "--exclude=types/...", "./...")
+	require.NoError(t, err)
+	exports := parseJSONOutput(t, stdout)
+	assert.Empty(t, exports)
+}
+
+func TestExclude_Multiple(t *testing.T) {
+	t.Parallel()
+	// Without exclude, types package has multiple unused exports
+	stdout, err := runOverexported(t, "-C", "testdata/types", "--json", "--test", "./...")
+	require.NoError(t, err)
+	exports := parseJSONOutput(t, stdout)
+	names := exportNames(exports)
+	assert.Contains(t, names, "UnusedType")
+	assert.Contains(t, names, "UsedType.UnusedMethod")
+
+	// Exclude types package but not cmd - should still have no results since
+	// the only exports are from types package
+	stdout, err = runOverexported(t, "-C", "testdata/types", "--json", "--test", "--exclude=types", "./...")
+	require.NoError(t, err)
+	exports = parseJSONOutput(t, stdout)
+	assert.Empty(t, exports)
+}
+
+func TestExclude_PartialMatch(t *testing.T) {
+	t.Parallel()
+	// Exclude only one package, leaving others
+	// Using foo testdata which has baz/foo package
+	stdout, err := runOverexported(t, "-C", "testdata/foo", "--json", "--test", "./...")
+	require.NoError(t, err)
+	exports := parseJSONOutput(t, stdout)
+	names := exportNames(exports)
+	assert.Contains(t, names, "Bar")
+
+	// Exclude baz/foo package
+	stdout, err = runOverexported(t, "-C", "testdata/foo", "--json", "--test", "--exclude=baz/foo", "./...")
+	require.NoError(t, err)
+	exports = parseJSONOutput(t, stdout)
+	assert.Empty(t, exports)
+
+	// Exclude with ... should also work
+	stdout, err = runOverexported(t, "-C", "testdata/foo", "--json", "--test", "--exclude=baz/...", "./...")
+	require.NoError(t, err)
+	exports = parseJSONOutput(t, stdout)
+	assert.Empty(t, exports)
+}
+
+func TestExclude_NoMatch(t *testing.T) {
+	t.Parallel()
+	// Exclude pattern that doesn't match anything should have no effect
+	stdout, err := runOverexported(t, "-C", "testdata/foo", "--json", "--test", "--exclude=nonexistent", "./...")
+	require.NoError(t, err)
+	exports := parseJSONOutput(t, stdout)
+	names := exportNames(exports)
+	assert.Contains(t, names, "Bar")
+}
+
 func TestTextOutput(t *testing.T) {
 	t.Parallel()
 	// Test that text output works (no --json flag)

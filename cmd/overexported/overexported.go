@@ -36,6 +36,10 @@ expression; its default value is the special string "<module>" which matches
 the listed packages and any other packages belonging to the same modules. Use
 --filter= to display all results.
 
+The --exclude flag excludes packages matching the provided pattern from the
+results. Patterns use the same syntax as 'go list' (e.g., "./...",
+"github.com/foo/bar/..."). This flag can be specified multiple times.
+
 Example: show all over-exported identifiers within a module:
 
   $ overexported --test ./...
@@ -59,6 +63,7 @@ type cliOptions struct {
 	Generated bool     `help:"Include exports in generated Go files."`
 	JSON      bool     `help:"Output JSON records."`
 	Filter    string   `default:"<module>" help:"Report only packages matching this regular expression. '<module>' matches the modules of all analyzed packages."`
+	Exclude   []string `help:"Exclude packages matching this pattern from the results. Can be specified multiple times."`
 	Packages  []string `arg:"" required:"" help:"Package patterns to analyze."`
 }
 
@@ -86,6 +91,7 @@ func run(stdout io.Writer, args []string) error {
 		Test:      cli.Test,
 		Generated: cli.Generated,
 		Filter:    cli.Filter,
+		Exclude:   cli.Exclude,
 		Dir:       cli.Chdir,
 	})
 	if err != nil {
