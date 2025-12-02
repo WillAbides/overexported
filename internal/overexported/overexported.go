@@ -112,10 +112,10 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 	}
 
 	// Find externally used exports via call graph
-	externallyUsed, externallyUsedPosn := findExternalUsageRTA(prog, res, targetPaths)
+	externallyUsed, externallyUsedPosn := findExternalUsageRTA(prog, res, targetPaths, opts.Test)
 
 	// Find externally used exports via TypesInfo.Uses (handles consts, vars, and other references)
-	findExternalUsageTypesInfo(allPkgs, targetPaths, externallyUsed)
+	findExternalUsageTypesInfo(allPkgs, targetPaths, externallyUsed, opts.Test)
 
 	// Add types that appear in RuntimeTypes (interface satisfaction)
 	res.RuntimeTypes.Iterate(func(t types.Type, _ any) {
@@ -331,6 +331,7 @@ func findExternalUsageRTA(
 	prog *ssa.Program,
 	res *rta.Result,
 	targetPaths map[string]bool,
+	includeTests bool,
 ) (used map[string]bool, usedPosn map[token.Position]bool) {
 	used = make(map[string]bool)
 	usedPosn = make(map[token.Position]bool)
@@ -341,8 +342,12 @@ func findExternalUsageRTA(
 			continue
 		}
 		callerPkg := fn.Pkg.Pkg.Path()
-		// Strip _test suffix for external test packages
-		callerPkg = strings.TrimSuffix(callerPkg, "_test")
+		// When not including tests, treat external test packages (foo_test)
+		// as the same package as foo. When including tests, external test
+		// packages are considered separate packages.
+		if !includeTests {
+			callerPkg = strings.TrimSuffix(callerPkg, "_test")
+		}
 
 		for _, edge := range node.Out {
 			callee := edge.Callee.Func
@@ -388,7 +393,9 @@ func findExternalUsageRTA(
 		if callerPkg == "" {
 			continue
 		}
-		callerPkg = strings.TrimSuffix(callerPkg, "_test")
+		if !includeTests {
+			callerPkg = strings.TrimSuffix(callerPkg, "_test")
+		}
 
 		// Check type references in function signature and body
 		collectTypeRefsFromFunc(fn, callerPkg, targetPaths, used)
@@ -413,14 +420,18 @@ func getSSAPkgPath(fn *ssa.Function) string {
 // findExternalUsageTypesInfo finds externally used exports by examining
 // TypesInfo.Uses across all packages. This catches references to consts,
 // vars, types, and functions that RTA's call graph doesn't track.
-func findExternalUsageTypesInfo(allPkgs []*packages.Package, targetPaths, used map[string]bool) {
+func findExternalUsageTypesInfo(allPkgs []*packages.Package, targetPaths, used map[string]bool, includeTests bool) {
 	for _, pkg := range allPkgs {
 		if pkg.TypesInfo == nil {
 			continue
 		}
 		callerPkg := pkg.PkgPath
-		// Strip _test suffix for external test packages
-		callerPkg = strings.TrimSuffix(callerPkg, "_test")
+		// When not including tests, treat external test packages (foo_test)
+		// as the same package as foo. When including tests, external test
+		// packages are considered separate packages.
+		if !includeTests {
+			callerPkg = strings.TrimSuffix(callerPkg, "_test")
+		}
 
 		for _, obj := range pkg.TypesInfo.Uses {
 			if obj == nil || obj.Pkg() == nil {
