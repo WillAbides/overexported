@@ -106,7 +106,6 @@ func Run(patterns []string, opts *Options) (*Result, error) {
 		return nil, err
 	}
 
-
 	// Build SSA program.
 	// Use ssautil.Packages instead of AllPackages to only build SSA for
 	// the initial packages, not all dependencies. This significantly
