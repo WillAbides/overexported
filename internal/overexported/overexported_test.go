@@ -1,8 +1,10 @@
 package overexported
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,4 +14,195 @@ func TestRun(t *testing.T) {
 	got, err := Run([]string{"./..."})
 	require.NoError(t, err)
 	require.Len(t, got.Exports, 1)
+	assert.Equal(t, "Bar", got.Exports[0].Name)
+	assert.Equal(t, "func", got.Exports[0].Kind)
+}
+
+func TestRun_TypesAndMethods(t *testing.T) {
+	t.Chdir("testdata/types")
+
+	got, err := Run([]string{"./..."})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// UnusedType and its method should be reported
+	assert.Contains(t, names, "UnusedType")
+	assert.Contains(t, names, "UnusedType.UnusedTypeMethod")
+
+	// UnusedMethod on UsedType should be reported
+	assert.Contains(t, names, "UsedType.UnusedMethod")
+
+	// UsedType and UsedMethod should NOT be reported
+	assert.NotContains(t, names, "UsedType")
+	assert.NotContains(t, names, "UsedType.UsedMethod")
+}
+
+func TestRun_InterfaceSatisfaction(t *testing.T) {
+	t.Chdir("testdata/interfaces")
+
+	got, err := Run([]string{"./..."})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// Impl is used (assigned to io.Reader) via RuntimeTypes
+	assert.NotContains(t, names, "Impl")
+	// Read is used (implements io.Reader)
+	assert.NotContains(t, names, "Impl.Read")
+
+	// UnusedImplMethod is not part of any interface and not called externally
+	assert.Contains(t, names, "Impl.UnusedImplMethod")
+
+	// UnusedImpl and its method are completely unused
+	assert.Contains(t, names, "UnusedImpl")
+	assert.Contains(t, names, "UnusedImpl.DoSomething")
+}
+
+func TestRun_ConstsAndVars(t *testing.T) {
+	t.Chdir("testdata/constvars")
+
+	got, err := Run([]string{"./..."})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// Unused exports should be reported
+	assert.Contains(t, names, "UnusedConst")
+	assert.Contains(t, names, "UnusedVar")
+	assert.Contains(t, names, "UnusedFunc")
+
+	// Used exports should NOT be reported
+	assert.NotContains(t, names, "UsedConst")
+	assert.NotContains(t, names, "UsedVar")
+	assert.NotContains(t, names, "UsedFunc")
+}
+
+func TestRun_GeneratedFiles(t *testing.T) {
+	t.Chdir("testdata/generated")
+
+	got, err := Run([]string{"./..."})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// ManualUnused should be reported (in hand-written file)
+	assert.Contains(t, names, "ManualUnused")
+
+	// ManualUsed should NOT be reported (used externally)
+	assert.NotContains(t, names, "ManualUsed")
+
+	// Generated file exports should NOT be reported regardless of usage
+	assert.NotContains(t, names, "GeneratedUnused")
+	assert.NotContains(t, names, "GeneratedUsed")
+}
+
+func TestRun_ExternalTestPackage(t *testing.T) {
+	t.Chdir("testdata/external_test")
+
+	got, err := Run([]string{"./..."})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// NotUsedInTests should be reported
+	assert.Contains(t, names, "NotUsedInTests")
+
+	// UsedInExternalTest and UsedInInternalTest should NOT be reported
+	// (used by external test package and cmd)
+	assert.NotContains(t, names, "UsedInExternalTest")
+	assert.NotContains(t, names, "UsedInInternalTest")
+}
+
+func TestRun_Generics(t *testing.T) {
+	t.Chdir("testdata/generics")
+
+	got, err := Run([]string{"./..."})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// Unused generic function and type should be reported
+	assert.Contains(t, names, "UnusedGeneric")
+	assert.Contains(t, names, "UnusedGenericType")
+
+	// Used generic function and type should NOT be reported.
+	// Position-based tracking handles instantiated generics correctly.
+	assert.NotContains(t, names, "UsedGeneric")
+	assert.NotContains(t, names, "UsedGenericType")
+}
+
+func TestRun_TypeReferences(t *testing.T) {
+	t.Chdir("testdata/typerefs")
+
+	got, err := Run([]string{"./..."})
+	require.NoError(t, err)
+
+	names := exportNames(got)
+
+	// Types used in function signatures should NOT be reported
+	assert.NotContains(t, names, "UsedAsParam")
+	assert.NotContains(t, names, "UsedAsReturn")
+	assert.NotContains(t, names, "UsedInSlice")
+	assert.NotContains(t, names, "UsedInMap")
+
+	// Functions using those types should NOT be reported
+	assert.NotContains(t, names, "TakesParam")
+	assert.NotContains(t, names, "ReturnsType")
+	assert.NotContains(t, names, "TakesSlice")
+	assert.NotContains(t, names, "TakesMap")
+
+	// UnusedType should be reported
+	assert.Contains(t, names, "UnusedType")
+}
+
+func TestRun_TargetPatternFiltering(t *testing.T) {
+	t.Chdir("testdata/foo")
+
+	// Only analyze the foo package, not cmd/foo
+	got, err := Run([]string{"foo"})
+	require.NoError(t, err)
+
+	// Should still find Bar as unused since it's only used internally
+	names := exportNames(got)
+	assert.Contains(t, names, "Bar")
+}
+
+func TestRun_EmptyResult(t *testing.T) {
+	t.Chdir("testdata/foo")
+
+	// When all exports are used, result should be empty
+	got, err := Run([]string{"foo/cmd/foo"})
+	require.NoError(t, err)
+	assert.Empty(t, got.Exports)
+}
+
+func TestExport_Fields(t *testing.T) {
+	t.Chdir("testdata/types")
+
+	got, err := Run([]string{"./..."})
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Exports)
+
+	// Find UnusedType and verify its fields
+	idx := slices.IndexFunc(got.Exports, func(e Export) bool {
+		return e.Name == "UnusedType"
+	})
+	require.GreaterOrEqual(t, idx, 0, "UnusedType should be in exports")
+
+	exp := got.Exports[idx]
+	assert.Equal(t, "UnusedType", exp.Name)
+	assert.Equal(t, "type", exp.Kind)
+	assert.Equal(t, "types", exp.PkgPath)
+	assert.NotEmpty(t, exp.Position.File)
+	assert.Greater(t, exp.Position.Line, 0)
+	assert.Greater(t, exp.Position.Col, 0)
+}
+
+func exportNames(r *Result) []string {
+	names := make([]string, len(r.Exports))
+	for i, e := range r.Exports {
+		names[i] = e.Name
+	}
+	return names
 }

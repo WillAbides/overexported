@@ -90,7 +90,10 @@ func Run(patterns []string) (*Result, error) {
 	}
 
 	// Find externally used exports via call graph
-	externallyUsed := findExternalUsageRTA(res, targetPaths)
+	externallyUsed, externallyUsedPosn := findExternalUsageRTA(prog, res, targetPaths)
+
+	// Find externally used exports via TypesInfo.Uses (handles consts, vars, and other references)
+	findExternalUsageTypesInfo(allPkgs, targetPaths, externallyUsed)
 
 	// Add types that appear in RuntimeTypes (interface satisfaction)
 	res.RuntimeTypes.Iterate(func(t types.Type, _ any) {
@@ -105,19 +108,15 @@ func Run(patterns []string) (*Result, error) {
 		if targetPaths[pkgPath] {
 			key := pkgPath + "." + named.Obj().Name()
 			externallyUsed[key] = true
-			// Also mark all methods of this type as used (interface satisfaction)
-			for i := range named.NumMethods() {
-				m := named.Method(i)
-				if m.Exported() {
-					methodKey := pkgPath + "." + named.Obj().Name() + "." + m.Name()
-					externallyUsed[methodKey] = true
-				}
-			}
+			// Note: We don't blanket-mark all methods as used. Instead, methods
+			// that are actually called (including via interface dispatch) should
+			// already be in the call graph. Only mark methods required by interfaces
+			// that the type actually satisfies in the analyzed code.
 		}
 	})
 
 	// Build result
-	return buildResult(exports, externallyUsed, generated), nil
+	return buildResult(exports, externallyUsed, externallyUsedPosn, generated), nil
 }
 
 func collectExportsSSA(
@@ -300,8 +299,13 @@ func collectConstExport(
 	}
 }
 
-func findExternalUsageRTA(res *rta.Result, targetPaths map[string]bool) map[string]bool {
-	used := make(map[string]bool)
+func findExternalUsageRTA(
+	prog *ssa.Program,
+	res *rta.Result,
+	targetPaths map[string]bool,
+) (used map[string]bool, usedPosn map[token.Position]bool) {
+	used = make(map[string]bool)
+	usedPosn = make(map[token.Position]bool)
 
 	// Walk call graph edges to find cross-package calls
 	for fn, node := range res.CallGraph.Nodes {
@@ -314,10 +318,15 @@ func findExternalUsageRTA(res *rta.Result, targetPaths map[string]bool) map[stri
 
 		for _, edge := range node.Out {
 			callee := edge.Callee.Func
-			if callee == nil || callee.Pkg == nil {
+			if callee == nil {
 				continue
 			}
-			calleePkg := callee.Pkg.Pkg.Path()
+
+			// For instantiated generic functions, Pkg is nil but Origin().Pkg is set
+			calleePkg := getSSAPkgPath(callee)
+			if calleePkg == "" {
+				continue
+			}
 
 			// Only care about calls to target packages
 			if !targetPaths[calleePkg] {
@@ -330,23 +339,79 @@ func findExternalUsageRTA(res *rta.Result, targetPaths map[string]bool) map[stri
 				if key != "" {
 					used[key] = true
 				}
+				// Also mark by position for generic function support.
+				// When a generic function is instantiated (e.g., UsedGeneric[int]),
+				// the instantiated version shares the same source position as the
+				// original declaration, so we mark the original as used too.
+				if callee.Pos().IsValid() {
+					usedPosn[prog.Fset.Position(callee.Pos())] = true
+				}
 			}
 		}
 	}
 
 	// Also check for type references in reachable functions
 	for fn := range res.Reachable {
-		if fn == nil || fn.Pkg == nil {
+		if fn == nil {
 			continue
 		}
-		callerPkg := fn.Pkg.Pkg.Path()
+		// For instantiated generic functions, use Origin() to get the package
+		callerPkg := getSSAPkgPath(fn)
+		if callerPkg == "" {
+			continue
+		}
 		callerPkg = strings.TrimSuffix(callerPkg, "_test")
 
 		// Check type references in function signature and body
 		collectTypeRefsFromFunc(fn, callerPkg, targetPaths, used)
 	}
 
-	return used
+	return used, usedPosn
+}
+
+// getSSAPkgPath returns the package path for an SSA function.
+// For instantiated generic functions, Pkg is nil but Origin().Pkg is set.
+func getSSAPkgPath(fn *ssa.Function) string {
+	switch {
+	case fn.Pkg != nil:
+		return fn.Pkg.Pkg.Path()
+	case fn.Origin() != nil && fn.Origin().Pkg != nil:
+		return fn.Origin().Pkg.Pkg.Path()
+	default:
+		return ""
+	}
+}
+
+// findExternalUsageTypesInfo finds externally used exports by examining
+// TypesInfo.Uses across all packages. This catches references to consts,
+// vars, types, and functions that RTA's call graph doesn't track.
+func findExternalUsageTypesInfo(allPkgs []*packages.Package, targetPaths, used map[string]bool) {
+	for _, pkg := range allPkgs {
+		if pkg.TypesInfo == nil {
+			continue
+		}
+		callerPkg := pkg.PkgPath
+		// Strip _test suffix for external test packages
+		callerPkg = strings.TrimSuffix(callerPkg, "_test")
+
+		for _, obj := range pkg.TypesInfo.Uses {
+			if obj == nil || obj.Pkg() == nil {
+				continue
+			}
+			objPkg := obj.Pkg().Path()
+
+			// Only care about references to target packages
+			if !targetPaths[objPkg] {
+				continue
+			}
+
+			// Check if this is an external reference
+			if callerPkg != objPkg && obj.Exported() {
+				key := objPkg + "." + obj.Name()
+				used[key] = true
+			}
+		}
+	}
 }
 
 func buildSSAKey(fn *ssa.Function) string {
@@ -471,11 +536,42 @@ func collectTypeRefs(t types.Type, callerPkg string, targetPaths, used map[strin
 	}
 }
 
-func buildResult(exports map[string]Export, externallyUsed, generated map[string]bool) *Result {
+// posnKey creates a comparable key from a token.Position, ignoring Offset.
+// This is necessary because token.Position includes an Offset field that
+// varies based on how the position was obtained, but we only care about
+// file, line, and column for comparison.
+type posnKey struct {
+	Filename string
+	Line     int
+	Column   int
+}
+
+func buildResult(
+	exports map[string]Export,
+	externallyUsed map[string]bool,
+	externallyUsedPosn map[token.Position]bool,
+	generated map[string]bool,
+) *Result {
+	// Convert position-based usage to keys that ignore Offset
+	usedPosnKeys := make(map[posnKey]bool)
+	for posn := range externallyUsedPosn {
+		usedPosnKeys[posnKey{Filename: posn.Filename, Line: posn.Line, Column: posn.Column}] = true
+	}
+
 	var result []Export
 
 	for key, exp := range exports {
 		if externallyUsed[key] {
+			continue
+		}
+		// Check position-based usage (handles generics where instantiated
+		// versions share the same source position as the original)
+		pk := posnKey{
+			Filename: exp.Position.File,
+			Line:     exp.Position.Line,
+			Column:   exp.Position.Col,
+		}
+		if usedPosnKeys[pk] {
 			continue
 		}
 		// Skip generated files

@@ -3,8 +3,14 @@
 
 set -e
 
-CDPATH="" cd -- "$(dirname -- "$0")/.."
+REPO_ROOT="$(
+  CDPATH="" cd -- "$(dirname -- "$0")/.."
+  pwd -P
+)"
 
-go build -o bin/overexported ./cmd/overexported
+(
+  cd "$REPO_ROOT" || exit 1
+  go build -o bin/overexported ./cmd/overexported
+)
 
-exec bin/overexported "$@"
+exec "$REPO_ROOT"/bin/overexported "$@"
