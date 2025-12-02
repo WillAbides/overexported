@@ -15,7 +15,7 @@ var cli struct {
 	Chdir     string   `short:"C" help:"Change to this directory before running."`
 	Test      bool     `help:"Include test packages and executables in the analysis."`
 	Generated bool     `help:"Include exports in generated Go files."`
-	Filter    string   `default:"<module>" help:"Report only packages matching this regular expression. '<module>' matches the module of the first package."`
+	Filter    string   `default:"<module>" help:"Report only packages matching this regular expression. '<module>' matches the modules of all analyzed packages."`
 	Packages  []string `arg:"" required:"" help:"Package Packages to analyze."`
 }
 

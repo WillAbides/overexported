@@ -41,8 +41,8 @@ type Options struct {
 	// Generated includes exports in generated Go files.
 	Generated bool
 	// Filter is a regular expression to filter which packages to report.
-	// The special value "<module>" (the default) reports only packages
-	// matching the module of the first package.
+	// The special value "<module>" reports only packages matching the
+	// modules of all analyzed packages.
 	Filter string
 }
 

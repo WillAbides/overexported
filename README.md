@@ -23,7 +23,7 @@ Flags:
       --test                 Include test packages and executables in the analysis.
       --generated            Include exports in generated Go files.
       --filter="<module>"    Report only packages matching this regular expression. '<module>'
-                             matches the module of the first package.
+                             matches the modules of all analyzed packages.
 ```
 
 <!--- end usage output --->
