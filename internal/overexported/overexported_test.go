@@ -134,12 +134,10 @@ func TestRun_ExternalTestPackage(t *testing.T) {
 	assert.NotContains(t, names, "UsedInExternalTest")
 	assert.NotContains(t, names, "UsedInInternalTest")
 
-	// OnlyUsedInTests SHOULD be reported even with Test: true because
-	// it's only used by the external test package (lib_test), which is
-	// treated as the same package as lib for the purpose of determining
-	// external usage. The --test flag includes test packages in the analysis
-	// but doesn't change what counts as "external" usage.
-	assert.Contains(t, names, "OnlyUsedInTests")
+	// OnlyUsedInTests should NOT be reported with Test: true because
+	// it's used by the external test package (lib_test), which is now
+	// treated as a separate package when --test is enabled.
+	assert.NotContains(t, names, "OnlyUsedInTests")
 }
 
 func TestRun_ExternalTestPackage_NoTest(t *testing.T) {
