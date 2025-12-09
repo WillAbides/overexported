@@ -1,5 +1,11 @@
 # overexported
 
+## Run with `go run`
+
+```shell
+go run github.com/willabides/overexported/cmd/overexported@latest
+```
+
 ## Install With [bindown](https://github.com/WillAbides/bindown)
 
 ```shell
