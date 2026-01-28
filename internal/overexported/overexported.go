@@ -261,7 +261,11 @@ func (c *exportCollector) collectTypeExport(m *ssa.Type) {
 	}
 
 	// Collect methods on this type (both value and pointer receivers)
-	named := m.Object().Type().(*types.Named)
+	// Type aliases don't have their own methods, so skip method collection for them
+	named, ok := m.Object().Type().(*types.Named)
+	if !ok {
+		return
+	}
 	c.collectMethodsFromMethodSet(m.Name(), c.prog.MethodSets.MethodSet(named))
 	c.collectMethodsFromMethodSet(m.Name(), c.prog.MethodSets.MethodSet(types.NewPointer(named)))
 }
@@ -463,6 +467,8 @@ func collectTypeRefsFromFunc(fn *ssa.Function, callerPkg string, targetPaths, us
 
 func collectTypeRefs(t types.Type, callerPkg string, targetPaths, used map[string]bool) {
 	switch tp := t.(type) {
+	case *types.Alias:
+		collectAliasTypeRefs(tp, callerPkg, targetPaths, used)
 	case *types.Named:
 		collectNamedTypeRefs(tp, callerPkg, targetPaths, used)
 	case *types.Pointer, *types.Slice, *types.Array, *types.Chan:
@@ -482,6 +488,17 @@ func collectTypeRefs(t types.Type, callerPkg string, targetPaths, used map[strin
 			collectTypeRefs(method.Type(), callerPkg, targetPaths, used)
 		}
 	}
+}
+
+func collectAliasTypeRefs(tp *types.Alias, callerPkg string, targetPaths, used map[string]bool) {
+	if tp.Obj() != nil && tp.Obj().Pkg() != nil {
+		pkgPath := tp.Obj().Pkg().Path()
+		if targetPaths[pkgPath] && callerPkg != pkgPath && token.IsExported(tp.Obj().Name()) {
+			used[pkgPath+"."+tp.Obj().Name()] = true
+		}
+	}
+	// Also check the underlying type
+	collectTypeRefs(tp.Rhs(), callerPkg, targetPaths, used)
 }
 
 func collectNamedTypeRefs(tp *types.Named, callerPkg string, targetPaths, used map[string]bool) {
