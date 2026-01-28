@@ -106,6 +106,13 @@ func Test_run(t *testing.T) {
 				wantNotContains: []string{"UsedAsParam", "UsedAsReturn", "UsedInSlice", "UsedInMap", "TakesParam", "ReturnsType", "TakesSlice", "TakesMap"},
 			},
 			{
+				name:            "type aliases",
+				dir:             "testdata/typealiases",
+				args:            []string{"./..."},
+				wantContains:    []string{"UnusedTimestamp", "UnusedString"},
+				wantNotContains: []string{"Timestamp", "UsedString", "Now"},
+			},
+			{
 				name:         "target pattern filtering",
 				dir:          "testdata/foo",
 				args:         []string{"baz/foo"},
