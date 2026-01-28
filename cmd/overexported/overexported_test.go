@@ -109,8 +109,8 @@ func Test_run(t *testing.T) {
 				name:            "type aliases",
 				dir:             "testdata/typealiases",
 				args:            []string{"./..."},
-				wantContains:    []string{"UnusedTimestamp", "UnusedString"},
-				wantNotContains: []string{"Timestamp", "UsedString", "Now"},
+				wantContains:    []string{"UnusedTimestamp", "UnusedString", "UnusedAsParam", "UnusedInStruct", "UnusedCounter"},
+				wantNotContains: []string{"Timestamp", "UsedString", "Now", "UsedAsParam", "UsedInStruct", "ProcessCount", "GetConfig", "Config", "MyCounter", "Counter", "Counter.Increment"},
 			},
 			{
 				name:         "target pattern filtering",
