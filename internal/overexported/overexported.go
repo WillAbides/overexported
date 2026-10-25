@@ -272,20 +272,35 @@ func (c *exportCollector) collectTypeExport(m *ssa.Type) {
 
 func (c *exportCollector) collectMethodsFromMethodSet(typeName string, mset *types.MethodSet) {
 	for sel := range mset.Methods() {
-		if !sel.Obj().Exported() {
+		method := sel.Obj().(*types.Func)
+		if !method.Exported() {
 			continue
 		}
+		if len(sel.Index()) > 1 {
+			// Promoted selections have no SSA wrapper to identify generic methods.
+			continue
+		}
+
 		fn := c.prog.MethodValue(sel)
-		if fn == nil || fn.Synthetic != "" {
+		// Generic methods have no SSA MethodValue.
+		if fn == nil && method.Signature().TypeParams().Len() == 0 {
 			continue
 		}
-		methodName := typeName + "." + sel.Obj().Name()
+		if fn != nil && fn.Synthetic != "" {
+			continue
+		}
+
+		methodName := typeName + "." + method.Name()
 		methodKey := c.pkgPath + "." + methodName
 		_, exists := c.exports[methodKey]
 		if exists {
 			continue
 		}
-		c.addExport(methodName, "method", fn.Pos())
+		pos := method.Pos()
+		if fn != nil {
+			pos = fn.Pos()
+		}
+		c.addExport(methodName, "method", pos)
 	}
 }
 
@@ -374,8 +389,8 @@ func getSSAPkgPath(fn *ssa.Function) string {
 }
 
 // findExternalUsageTypesInfo finds externally used exports by examining
-// TypesInfo.Uses across all packages. This catches references to consts,
-// vars, types, and functions that RTA's call graph doesn't track.
+// TypesInfo.Uses across all packages. This catches exported declarations that
+// do not appear as call-graph edges, such as generic methods.
 func findExternalUsageTypesInfo(opts Options, allPkgs []*packages.Package, targetPaths, used map[string]bool) {
 	for _, pkg := range allPkgs {
 		if pkg.TypesInfo == nil {
@@ -395,18 +410,29 @@ func findExternalUsageTypesInfo(opts Options, allPkgs []*packages.Package, targe
 			}
 			objPkg := obj.Pkg().Path()
 
-			// Only care about references to target packages
-			if !targetPaths[objPkg] {
+			if !targetPaths[objPkg] || callerPkg == objPkg || !obj.Exported() {
 				continue
 			}
-
-			// Check if this is an external reference
-			if callerPkg != objPkg && obj.Exported() {
-				key := objPkg + "." + obj.Name()
-				used[key] = true
-			}
+			used[typesInfoObjectKey(obj, objPkg)] = true
 		}
 	}
+}
+
+func typesInfoObjectKey(obj types.Object, pkgPath string) string {
+	key := pkgPath + "." + obj.Name()
+	method, ok := obj.(*types.Func)
+	if !ok {
+		return key
+	}
+	recv := method.Signature().Recv()
+	if recv == nil {
+		return key
+	}
+	methodKey := buildMethodKey(pkgPath, method.Name(), recv.Type())
+	if methodKey == "" {
+		return key
+	}
+	return methodKey
 }
 
 func buildSSAKey(fn *ssa.Function) string {
@@ -418,15 +444,24 @@ func buildSSAKey(fn *ssa.Function) string {
 	// Check if this is a method
 	recv := fn.Signature.Recv()
 	if recv != nil {
-		typeName := getReceiverTypeName(recv.Type())
-		if typeName != "" {
-			return pkgPath + "." + typeName + "." + fn.Name()
+		key := buildMethodKey(pkgPath, fn.Name(), recv.Type())
+		if key != "" {
+			return key
 		}
 	}
 	return pkgPath + "." + fn.Name()
 }
 
+func buildMethodKey(pkgPath, methodName string, recv types.Type) string {
+	typeName := getReceiverTypeName(recv)
+	if typeName == "" {
+		return ""
+	}
+	return pkgPath + "." + typeName + "." + methodName
+}
+
 func getReceiverTypeName(t types.Type) string {
+	t = types.Unalias(t)
 	switch tp := t.(type) {
 	case *types.Named:
 		return tp.Obj().Name()
