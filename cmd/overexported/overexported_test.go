@@ -99,6 +99,13 @@ func Test_run(t *testing.T) {
 				wantNotContains: []string{"UsedGeneric", "UsedGenericType"},
 			},
 			{
+				name:            "Go 1.26 and 1.27 syntax with generic stdlib methods",
+				dir:             "testdata/go127",
+				args:            []string{"./..."},
+				wantContains:    []string{"UnusedGenericMethod", "UnusedGenericMethod.Map", "Promoted"},
+				wantNotContains: []string{"GenericMethod", "GenericMethod.Map", "Promoted.Map"},
+			},
+			{
 				name:            "type references",
 				dir:             "testdata/typerefs",
 				args:            []string{"./..."},
