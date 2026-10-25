@@ -6,6 +6,12 @@ func (GenericMethod) Map[T any](value T) T {
 	return value
 }
 
+type genericMethodAlias = GenericMethod
+
+func (genericMethodAlias) MapAlias[T any](value T) T {
+	return value
+}
+
 type Promoted struct {
 	GenericMethod
 }

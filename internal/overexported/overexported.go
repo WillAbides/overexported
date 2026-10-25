@@ -461,6 +461,7 @@ func buildMethodKey(pkgPath, methodName string, recv types.Type) string {
 }
 
 func getReceiverTypeName(t types.Type) string {
+	t = types.Unalias(t)
 	switch tp := t.(type) {
 	case *types.Named:
 		return tp.Obj().Name()

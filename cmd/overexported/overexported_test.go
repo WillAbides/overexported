@@ -103,7 +103,7 @@ func Test_run(t *testing.T) {
 				dir:             "testdata/go127",
 				args:            []string{"./..."},
 				wantContains:    []string{"UnusedGenericMethod", "UnusedGenericMethod.Map", "Promoted"},
-				wantNotContains: []string{"GenericMethod", "GenericMethod.Map", "Promoted.Map"},
+				wantNotContains: []string{"GenericMethod", "GenericMethod.Map", "GenericMethod.MapAlias", "Promoted.Map"},
 			},
 			{
 				name:            "type references",
